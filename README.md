@@ -34,3 +34,30 @@ You can check out [the Next.js GitHub repository](https://github.com/vercel/next
 The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+
+## Flight planner architecture
+
+The `planner` modules contain the product logic for building and ranking one-way hub itineraries. The `providers` layer is responsible for talking to external flight-data sources, while the application types stay provider-neutral so the rest of the app does not depend on Duffel-specific shapes.
+
+V1 currently considers only Bangkok Suvarnabhumi (`BKK`) as a candidate hub. The mock provider is ready for local development and testing, while the Duffel provider is intentionally left unimplemented until the current API contract is verified.
+
+```ts
+import { planTrip } from "@/lib/planner/planTrip";
+import { mockFlightProvider } from "@/lib/providers/mockFlightProvider";
+
+const request = {
+  origin: "BNE",
+  destination: "LCA",
+  departureWindow: {
+    start: "2026-09-06",
+    end: "2026-09-12",
+  },
+  arrivalWindow: {
+    start: "2026-09-12",
+    end: "2026-09-20",
+  },
+  adults: 1,
+};
+
+const itineraries = await planTrip(request, mockFlightProvider);
+```
