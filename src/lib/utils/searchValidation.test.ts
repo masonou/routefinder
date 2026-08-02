@@ -1,118 +1,100 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { findAirportByCode } from "../../data/airports.ts";
+import { searchAirports } from "./airportSearch.ts";
+import { MIN_HUB_STAY_NIGHTS } from "../constants/planner.ts";
 import {
   SearchValidationError,
   buildResultsUrl,
   createSearchRequestFromFormValues,
-  normalizeAirportCodeInput,
+  toTripRequest,
   validateSearchApiBody,
   validateSearchFormValues,
 } from "./searchValidation.ts";
 
-test("search form airport normalisation uppercases and trims to three letters", () => {
-  assert.equal(normalizeAirportCodeInput("bne1"), "BNE");
-  assert.equal(normalizeAirportCodeInput(" lcax "), "LCA");
+const validValues = {
+  origin: "BNE",
+  destination: "LCA",
+  earliestDeparture: "2099-08-10",
+  latestArrival: "2099-08-18",
+};
+
+test("an exact IATA search ranks first", () => {
+  assert.equal(searchAirports("lca")[0]?.iataCode, "LCA");
 });
 
-test("departure range longer than seven days is rejected", () => {
-  const errors = validateSearchFormValues({
-    origin: "BNE",
-    destination: "LCA",
-    departureStart: "2026-09-01",
-    departureEnd: "2026-09-08",
-    arrivalStart: "2026-09-10",
-    arrivalEnd: "2026-09-20",
-  });
-
-  assert.equal(errors.departure, "Range must be 7 days or less.");
+test("airport search supports city, airport name, country, and case-insensitive matching", () => {
+  assert.equal(searchAirports("brisbane")[0]?.iataCode, "BNE");
+  assert.equal(searchAirports("heathrow")[0]?.iataCode, "LHR");
+  assert.ok(searchAirports("cyPrUs").some((airport) => airport.iataCode === "LCA"));
 });
 
-test("invalid date order is rejected", () => {
-  const errors = validateSearchFormValues({
-    origin: "BNE",
-    destination: "LCA",
-    departureStart: "2026-09-12",
-    departureEnd: "2026-09-06",
-    arrivalStart: "2026-09-12",
-    arrivalEnd: "2026-09-20",
-  });
-
-  assert.equal(errors.departure, "Latest date must be after earliest.");
+test("airport suggestions are limited to eight", () => {
+  assert.ok(searchAirports("a").length <= 8);
 });
 
-test("API request validation normalises airports and defaults adults", () => {
-  const request = validateSearchApiBody({
-    origin: "bne",
-    destination: "lca",
-    departureWindow: {
-      start: "2026-09-06",
-      end: "2026-09-12",
-    },
-    arrivalWindow: {
-      start: "2026-09-12",
-      end: "2026-09-20",
-    },
-  });
+test("airport lookup returns undefined for an unknown code", () => {
+  assert.equal(findAirportByCode("ZZZ"), undefined);
+});
 
-  assert.deepEqual(request, {
-    origin: "BNE",
-    destination: "LCA",
-    departureWindow: {
-      start: "2026-09-06",
-      end: "2026-09-12",
-    },
-    arrivalWindow: {
-      start: "2026-09-12",
-      end: "2026-09-20",
-    },
+test("selected airport codes and dates form the public search request", () => {
+  assert.deepEqual(createSearchRequestFromFormValues(validValues), {
+    ...validValues,
     adults: 1,
   });
 });
 
-test("API request validation rejects invalid airport codes", () => {
+test("invalid free-form airport text cannot be submitted", () => {
+  assert.equal(validateSearchFormValues({ ...validValues, origin: "Brisbane" }).origin, "Select an airport.");
   assert.throws(
-    () =>
-      validateSearchApiBody({
-        origin: "BN",
-        destination: "LCA",
-        departureWindow: {
-          start: "2026-09-06",
-          end: "2026-09-12",
-        },
-        arrivalWindow: {
-          start: "2026-09-12",
-          end: "2026-09-20",
-        },
-        adults: 1,
-      }),
+    () => createSearchRequestFromFormValues({ ...validValues, origin: "Brisbane" }),
     SearchValidationError
   );
 });
 
-test("buildResultsUrl produces the expected query string", () => {
+test("origin and destination cannot be identical", () => {
+  assert.equal(validateSearchFormValues({ ...validValues, destination: "BNE" }).destination, "Choose different airports.");
+});
+
+test("the shortest window that allows the minimum hub stay is accepted", () => {
+  const latestArrival = "2099-08-12";
   assert.equal(
-    buildResultsUrl({
-      origin: "bne",
-      destination: "lca",
-      departureStart: "2026-09-06",
-      departureEnd: "2026-09-12",
-      arrivalStart: "2026-09-12",
-      arrivalEnd: "2026-09-20",
-    }),
-    "/results?origin=BNE&destination=LCA&departureStart=2026-09-06&departureEnd=2026-09-12&arrivalStart=2026-09-12&arrivalEnd=2026-09-20"
+    validateSearchFormValues({ ...validValues, latestArrival }).dates,
+    undefined
+  );
+  assert.equal(MIN_HUB_STAY_NIGHTS, 2);
+});
+
+test("a window too short for the hub stay is rejected", () => {
+  assert.equal(
+    validateSearchFormValues({ ...validValues, latestArrival: "2099-08-11" }).dates,
+    "Allow at least 2 nights."
   );
 });
 
-test("createSearchRequestFromFormValues keeps one adult internally", () => {
-  const request = createSearchRequestFromFormValues({
+test("a fourteen-day inclusive window is accepted and fifteen days is rejected", () => {
+  assert.equal(validateSearchFormValues({ ...validValues, latestArrival: "2099-08-23" }).dates, undefined);
+  assert.equal(
+    validateSearchFormValues({ ...validValues, latestArrival: "2099-08-24" }).dates,
+    "Maximum trip window is 14 days."
+  );
+});
+
+test("API validation defaults adults and derives the planner windows", () => {
+  const publicRequest = validateSearchApiBody(validValues);
+  assert.deepEqual(toTripRequest(publicRequest), {
     origin: "BNE",
     destination: "LCA",
-    departureStart: "2026-09-06",
-    departureEnd: "2026-09-12",
-    arrivalStart: "2026-09-12",
-    arrivalEnd: "2026-09-20",
+    departureWindow: { start: "2099-08-10", end: "2099-08-16" },
+    arrivalWindow: { start: "2099-08-10", end: "2099-08-18" },
+    adults: 1,
   });
+});
 
-  assert.equal(request.adults, 1);
+test("buildResultsUrl uses only the simplified search parameters", () => {
+  assert.equal(
+    buildResultsUrl(validValues),
+    "/results?origin=BNE&destination=LCA&earliestDeparture=2099-08-10&latestArrival=2099-08-18"
+  );
 });

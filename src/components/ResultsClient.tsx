@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import type { Itinerary } from "../types/itinerary.ts";
-import type { TripRequest } from "../types/trip.ts";
+import type { PublicSearchRequest } from "../lib/utils/searchValidation.ts";
 import { ItineraryCard } from "./ItineraryCard";
 
 interface SearchApiResponse {
@@ -17,7 +17,7 @@ interface SearchApiError {
 }
 
 interface ResultsClientProps {
-  request: TripRequest;
+  request: PublicSearchRequest;
 }
 
 export function ResultsClient({ request }: ResultsClientProps) {
@@ -67,10 +67,8 @@ export function ResultsClient({ request }: ResultsClientProps) {
     request,
     request.origin,
     request.destination,
-    request.departureWindow.start,
-    request.departureWindow.end,
-    request.arrivalWindow.start,
-    request.arrivalWindow.end,
+    request.earliestDeparture,
+    request.latestArrival,
     request.adults,
     retryToken,
   ]);

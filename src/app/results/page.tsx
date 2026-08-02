@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { ResultsClient } from "../../components/ResultsClient";
+import { findAirportByCode } from "../../data/airports";
 import {
   createSearchRequestFromFormValues,
   type SearchFormValues,
@@ -33,10 +34,8 @@ export default async function ResultsPage({ searchParams }: ResultsPageProps) {
   const values: SearchFormValues = {
     origin: readQueryValue(params, "origin") ?? "",
     destination: readQueryValue(params, "destination") ?? "",
-    departureStart: readQueryValue(params, "departureStart") ?? "",
-    departureEnd: readQueryValue(params, "departureEnd") ?? "",
-    arrivalStart: readQueryValue(params, "arrivalStart") ?? "",
-    arrivalEnd: readQueryValue(params, "arrivalEnd") ?? "",
+    earliestDeparture: readQueryValue(params, "earliestDeparture") ?? "",
+    latestArrival: readQueryValue(params, "latestArrival") ?? "",
   };
   const request = parseRequest(values);
 
@@ -53,25 +52,22 @@ export default async function ResultsPage({ searchParams }: ResultsPageProps) {
     );
   }
 
+  const origin = findAirportByCode(request.origin);
+  const destination = findAirportByCode(request.destination);
+
   return (
     <main className="min-h-screen bg-stone-50 px-4 py-10 text-stone-950 sm:px-6">
       <div className="mx-auto flex w-full max-w-3xl flex-col gap-6">
         <header className="space-y-2">
           <p className="text-2xl font-semibold">
-            {request.origin} → {request.destination}
+            {origin ? `${origin.city} (${origin.iataCode})` : request.origin} → {" "}
+            {destination
+              ? `${destination.city} (${destination.iataCode})`
+              : request.destination}
           </p>
           <p className="text-sm text-stone-700">via Bangkok</p>
           <p className="text-sm text-stone-700">
-            Leave{" "}
-            {formatDateRangeCompact(
-              request.departureWindow.start,
-              request.departureWindow.end
-            )}{" "}
-            · Arrive{" "}
-            {formatDateRangeCompact(
-              request.arrivalWindow.start,
-              request.arrivalWindow.end
-            )}
+            {formatDateRangeCompact(request.earliestDeparture, request.latestArrival)}
           </p>
           <Link href="/" className="text-sm text-blue-700 underline">
             New search

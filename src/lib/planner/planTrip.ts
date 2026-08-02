@@ -1,4 +1,5 @@
 import { MAX_RESULTS } from "@/lib/constants/planner";
+import { selectDiverseItineraries } from "@/lib/planner/deduplicateItineraries";
 import {
   calculateHubStayNights,
   deriveSecondLegDepartureWindow,
@@ -142,17 +143,5 @@ export async function planTrip(
     }
   }
 
-  return itineraries
-    .sort((left, right) => {
-      if (right.score !== left.score) {
-        return right.score - left.score;
-      }
-
-      if (left.totalPrice.amount !== right.totalPrice.amount) {
-        return left.totalPrice.amount - right.totalPrice.amount;
-      }
-
-      return left.totalFlightDurationMinutes - right.totalFlightDurationMinutes;
-    })
-    .slice(0, MAX_RESULTS);
+  return selectDiverseItineraries(itineraries, MAX_RESULTS);
 }

@@ -61,3 +61,10 @@ const request = {
 
 const itineraries = await planTrip(request, mockFlightProvider);
 ```
+
+## Manual verification
+
+1. Select Brisbane and Larnaca from the airport suggestions.
+2. Choose an earliest departure of `2026-08-10` and latest arrival of `2026-08-18`.
+3. Submit the form and confirm the URL contains only `origin`, `destination`, `earliestDeparture`, and `latestArrival`.
+4. Confirm every displayed itinerary departs on or after 10 August, arrives in Larnaca by 18 August, and includes a 2–6 night Bangkok stay.

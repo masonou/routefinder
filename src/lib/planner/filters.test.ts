@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   calculateHubStayNights,
   deriveSecondLegDepartureWindow,
+  isArrivalWithinWindow,
 } from "./filters.ts";
 import type { FlightOffer } from "../../types/flight";
 
@@ -124,5 +125,17 @@ test("deriveSecondLegDepartureWindow caps the end date to the final arrival wind
       start: "2026-09-12",
       end: "2026-09-15",
     }
+  );
+});
+
+test("a final arrival on the deadline is accepted and one after it is rejected", () => {
+  const deadline = { start: "2026-09-10", end: "2026-09-18" };
+  assert.equal(
+    isArrivalWithinWindow(createFlightOffer({ arrivalAt: "2026-09-18T23:30:00+03:00" }), deadline),
+    true
+  );
+  assert.equal(
+    isArrivalWithinWindow(createFlightOffer({ arrivalAt: "2026-09-19T00:01:00+03:00" }), deadline),
+    false
   );
 });

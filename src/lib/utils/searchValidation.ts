@@ -1,25 +1,28 @@
+import { findAirportByCode } from "../../data/airports.ts";
+import { MIN_HUB_STAY_NIGHTS } from "../constants/planner.ts";
+import { subtractCalendarDays } from "./dateWindow.ts";
 import type { TripRequest } from "../../types/trip.ts";
 
-const AIRPORT_CODE_PATTERN = /^[A-Z]{3}$/;
 const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1000;
 
-export const MAX_DEPARTURE_WINDOW_DAYS = 7;
+export const MAX_TRIP_WINDOW_DAYS = 14;
 
 export interface SearchFormValues {
   origin: string;
   destination: string;
-  departureStart: string;
-  departureEnd: string;
-  arrivalStart: string;
-  arrivalEnd: string;
+  earliestDeparture: string;
+  latestArrival: string;
+}
+
+export interface PublicSearchRequest extends SearchFormValues {
+  adults: number;
 }
 
 export interface SearchFormErrors {
   origin?: string;
   destination?: string;
-  departure?: string;
-  arrival?: string;
+  dates?: string;
 }
 
 export class SearchValidationError extends Error {
@@ -32,28 +35,23 @@ export class SearchValidationError extends Error {
 }
 
 function parseIsoDate(date: string): Date | null {
-  if (!ISO_DATE_PATTERN.test(date)) {
-    return null;
-  }
+  if (!ISO_DATE_PATTERN.test(date)) return null;
 
   const parsed = new Date(`${date}T00:00:00.000Z`);
-  if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== date) {
-    return null;
-  }
-
-  return parsed;
+  return Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== date
+    ? null
+    : parsed;
 }
 
 function getInclusiveDateCount(start: string, end: string): number | null {
   const startDate = parseIsoDate(start);
   const endDate = parseIsoDate(end);
-  if (!startDate || !endDate || startDate > endDate) {
-    return null;
-  }
+  if (!startDate || !endDate || startDate > endDate) return null;
+  return Math.floor((endDate.getTime() - startDate.getTime()) / MILLISECONDS_PER_DAY) + 1;
+}
 
-  return (
-    Math.floor((endDate.getTime() - startDate.getTime()) / MILLISECONDS_PER_DAY) + 1
-  );
+function todayIsoDate(): string {
+  return new Date().toISOString().slice(0, 10);
 }
 
 function hasErrors(errors: SearchFormErrors): boolean {
@@ -61,7 +59,7 @@ function hasErrors(errors: SearchFormErrors): boolean {
 }
 
 export function normalizeAirportCodeInput(value: string): string {
-  return value.toUpperCase().replace(/[^A-Z]/g, "").slice(0, 3);
+  return value.trim().toUpperCase();
 }
 
 export function isValidIsoDate(value: string): boolean {
@@ -73,42 +71,37 @@ export function validateSearchFormValues(values: SearchFormValues): SearchFormEr
   const origin = normalizeAirportCodeInput(values.origin);
   const destination = normalizeAirportCodeInput(values.destination);
 
-  if (!AIRPORT_CODE_PATTERN.test(origin)) {
-    errors.origin = "Enter a 3-letter code.";
+  if (!findAirportByCode(origin)) {
+    errors.origin = "Select an airport.";
   }
 
-  if (!AIRPORT_CODE_PATTERN.test(destination)) {
-    errors.destination = "Enter a 3-letter code.";
-  } else if (origin === destination && origin.length === 3) {
-    errors.destination = "Use a different airport.";
+  if (!findAirportByCode(destination)) {
+    errors.destination = "Select an airport.";
+  } else if (origin === destination && findAirportByCode(origin)) {
+    errors.destination = "Choose different airports.";
   }
 
-  if (!values.departureStart || !values.departureEnd) {
-    errors.departure = "Choose both dates.";
-  } else if (!isValidIsoDate(values.departureStart) || !isValidIsoDate(values.departureEnd)) {
-    errors.departure = "Use valid dates.";
-  } else if (values.departureStart > values.departureEnd) {
-    errors.departure = "Latest date must be after earliest.";
+  if (!values.earliestDeparture || !values.latestArrival) {
+    errors.dates = "Choose both dates.";
+  } else if (!isValidIsoDate(values.earliestDeparture) || !isValidIsoDate(values.latestArrival)) {
+    errors.dates = "Use valid dates.";
+  } else if (values.earliestDeparture < todayIsoDate() || values.latestArrival < todayIsoDate()) {
+    errors.dates = "Dates cannot be in the past.";
+  } else if (values.earliestDeparture >= values.latestArrival) {
+    errors.dates = "Latest arrival must be after departure.";
   } else {
-    const departureDays = getInclusiveDateCount(
-      values.departureStart,
-      values.departureEnd
-    );
-    if (departureDays === null) {
-      errors.departure = "Use valid dates.";
-    } else if (departureDays > MAX_DEPARTURE_WINDOW_DAYS) {
-      errors.departure = "Range must be 7 days or less.";
+    const dateCount = getInclusiveDateCount(values.earliestDeparture, values.latestArrival);
+    if (dateCount === null) {
+      errors.dates = "Use valid dates.";
+    } else if (dateCount > MAX_TRIP_WINDOW_DAYS) {
+      errors.dates = "Maximum trip window is 14 days.";
+    } else {
+      const minimumLatestArrival = new Date(`${values.earliestDeparture}T00:00:00.000Z`);
+      minimumLatestArrival.setUTCDate(minimumLatestArrival.getUTCDate() + MIN_HUB_STAY_NIGHTS);
+      if (values.latestArrival < minimumLatestArrival.toISOString().slice(0, 10)) {
+        errors.dates = `Allow at least ${MIN_HUB_STAY_NIGHTS} nights.`;
+      }
     }
-  }
-
-  if (!values.arrivalStart || !values.arrivalEnd) {
-    errors.arrival = "Choose both dates.";
-  } else if (!isValidIsoDate(values.arrivalStart) || !isValidIsoDate(values.arrivalEnd)) {
-    errors.arrival = "Use valid dates.";
-  } else if (values.arrivalStart > values.arrivalEnd) {
-    errors.arrival = "Latest date must be after earliest.";
-  } else if (isValidIsoDate(values.departureStart) && values.arrivalEnd < values.departureStart) {
-    errors.arrival = "Arrival must be after departure.";
   }
 
   return errors;
@@ -117,18 +110,11 @@ export function validateSearchFormValues(values: SearchFormValues): SearchFormEr
 export function createSearchRequestFromFormValues(
   values: SearchFormValues,
   adults = 1
-): TripRequest {
+): PublicSearchRequest {
   const errors = validateSearchFormValues(values);
   if (hasErrors(errors)) {
-    throw new SearchValidationError(
-      errors.origin ??
-        errors.destination ??
-        errors.departure ??
-        errors.arrival ??
-        "Invalid search."
-    );
+    throw new SearchValidationError(errors.origin ?? errors.destination ?? errors.dates ?? "Invalid search.");
   }
-
   if (!Number.isInteger(adults) || adults <= 0) {
     throw new SearchValidationError("Adults must be a positive integer.");
   }
@@ -136,76 +122,62 @@ export function createSearchRequestFromFormValues(
   return {
     origin: normalizeAirportCodeInput(values.origin),
     destination: normalizeAirportCodeInput(values.destination),
-    departureWindow: {
-      start: values.departureStart,
-      end: values.departureEnd,
-    },
-    arrivalWindow: {
-      start: values.arrivalStart,
-      end: values.arrivalEnd,
-    },
+    earliestDeparture: values.earliestDeparture,
+    latestArrival: values.latestArrival,
     adults,
   };
 }
 
 function getRequiredString(record: Record<string, unknown>, key: string): string {
   const value = record[key];
-  if (typeof value !== "string") {
-    throw new SearchValidationError(`Missing ${key}.`);
-  }
-
+  if (typeof value !== "string") throw new SearchValidationError(`Missing ${key}.`);
   return value;
 }
 
-export function validateSearchApiBody(body: unknown): TripRequest {
+export function validateSearchApiBody(body: unknown): PublicSearchRequest {
   if (typeof body !== "object" || body === null) {
     throw new SearchValidationError("Request body must be an object.");
   }
-
   const record = body as Record<string, unknown>;
-  const departureWindow =
-    typeof record["departureWindow"] === "object" && record["departureWindow"] !== null
-      ? (record["departureWindow"] as Record<string, unknown>)
-      : null;
-  const arrivalWindow =
-    typeof record["arrivalWindow"] === "object" && record["arrivalWindow"] !== null
-      ? (record["arrivalWindow"] as Record<string, unknown>)
-      : null;
-
-  if (!departureWindow || !arrivalWindow) {
-    throw new SearchValidationError("Departure and arrival windows are required.");
+  const adultsValue = record.adults;
+  const adults = adultsValue === undefined ? 1 : adultsValue;
+  if (typeof adults !== "number" || !Number.isInteger(adults)) {
+    throw new SearchValidationError("Adults must be a positive integer.");
   }
-
-  const adultsValue = record["adults"];
-  const adults =
-    typeof adultsValue === "number" && Number.isInteger(adultsValue)
-      ? adultsValue
-      : adultsValue === undefined
-        ? 1
-        : NaN;
 
   return createSearchRequestFromFormValues(
     {
       origin: getRequiredString(record, "origin"),
       destination: getRequiredString(record, "destination"),
-      departureStart: getRequiredString(departureWindow, "start"),
-      departureEnd: getRequiredString(departureWindow, "end"),
-      arrivalStart: getRequiredString(arrivalWindow, "start"),
-      arrivalEnd: getRequiredString(arrivalWindow, "end"),
+      earliestDeparture: getRequiredString(record, "earliestDeparture"),
+      latestArrival: getRequiredString(record, "latestArrival"),
     },
     adults
   );
+}
+
+export function toTripRequest(request: PublicSearchRequest): TripRequest {
+  return {
+    origin: request.origin,
+    destination: request.destination,
+    departureWindow: {
+      start: request.earliestDeparture,
+      end: subtractCalendarDays(request.latestArrival, MIN_HUB_STAY_NIGHTS),
+    },
+    arrivalWindow: {
+      start: request.earliestDeparture,
+      end: request.latestArrival,
+    },
+    adults: request.adults,
+  };
 }
 
 export function buildResultsUrl(values: SearchFormValues): string {
   const params = new URLSearchParams({
     origin: normalizeAirportCodeInput(values.origin),
     destination: normalizeAirportCodeInput(values.destination),
-    departureStart: values.departureStart,
-    departureEnd: values.departureEnd,
-    arrivalStart: values.arrivalStart,
-    arrivalEnd: values.arrivalEnd,
+    earliestDeparture: values.earliestDeparture,
+    latestArrival: values.latestArrival,
   });
-
   return `/results?${params.toString()}`;
 }

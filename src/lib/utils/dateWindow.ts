@@ -22,6 +22,16 @@ function formatIsoDate(date: Date): string {
   return date.toISOString().slice(0, 10);
 }
 
+export function subtractCalendarDays(date: string, days: number): string {
+  if (!Number.isInteger(days) || days < 0) {
+    throw new Error("Days must be a non-negative integer.");
+  }
+
+  const parsed = parseIsoDate(date);
+  parsed.setUTCDate(parsed.getUTCDate() - days);
+  return formatIsoDate(parsed);
+}
+
 export function enumerateDateWindow(window: DateWindow): string[] {
   const startDate = parseIsoDate(window.start);
   const endDate = parseIsoDate(window.end);
