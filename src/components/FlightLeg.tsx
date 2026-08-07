@@ -13,7 +13,7 @@ function getRouteLabel(offer: FlightOffer): string {
 
 function getAirlineLabel(offer: FlightOffer): string {
   return Array.from(
-    new Set(offer.segments.map((segment) => segment.airlineName))
+    new Set(offer.segments.map((segment) => segment.airlineName)),
   ).join(", ");
 }
 
@@ -32,17 +32,20 @@ interface FlightLegProps {
 export function FlightLeg({ leg }: FlightLegProps) {
   return (
     <section className="space-y-1">
-      <h3 className="text-base font-semibold text-stone-950">{getRouteLabel(leg)}</h3>
+      <h3 className="text-base font-semibold text-stone-950">
+        {getRouteLabel(leg)}
+      </h3>
       <p className="text-sm text-stone-700">
-        {formatFlightDate(leg.departureAt)} · {formatFlightTime(leg.departureAt)}–
-        {formatFlightTime(leg.arrivalAt)}
+        {formatFlightDate(leg.departureAt)} ·{" "}
+        {formatFlightTime(leg.departureAt)}–{formatFlightTime(leg.arrivalAt)}
       </p>
       <p className="text-sm text-stone-700">
         {getStopLabel(leg.stops)} · {formatDuration(leg.durationMinutes)}
       </p>
       <p className="text-sm text-stone-700">{getAirlineLabel(leg)}</p>
       <p className="text-sm font-medium text-stone-950">
-        Approx. {formatMoney(leg.indicativePrice.amount, leg.indicativePrice.currency)}
+        ~{" "}
+        {formatMoney(leg.indicativePrice.amount, leg.indicativePrice.currency)}
       </p>
     </section>
   );

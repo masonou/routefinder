@@ -20,8 +20,11 @@ export function ItineraryCard({ itinerary }: ItineraryCardProps) {
       <FlightLeg leg={itinerary.secondLeg} />
       <div className="border-t border-stone-200 pt-4 text-sm text-stone-700">
         <p className="font-medium text-stone-950">
-          Approx. total{" "}
-          {formatMoney(itinerary.totalPrice.amount, itinerary.totalPrice.currency)}
+          ~{" "}
+          {formatMoney(
+            itinerary.totalPrice.amount,
+            itinerary.totalPrice.currency,
+          )}
         </p>
         <p>
           {formatDuration(itinerary.totalFlightDurationMinutes)} flying ·{" "}

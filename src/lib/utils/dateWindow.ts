@@ -3,6 +3,8 @@ import type { DateWindow } from "../../types/trip.ts";
 const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1000;
 
+// This caps flexible searches at 14 calendar days to protect live API usage and cost,
+// as well as keeping server work bounded.
 export const MAX_FLEXIBLE_SEARCH_DAYS = 14;
 
 function parseIsoDate(date: string): Date {

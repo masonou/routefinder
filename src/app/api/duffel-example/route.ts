@@ -1,9 +1,20 @@
 import { NextResponse } from "next/server";
 
-import { duffelFlightProvider } from "@/lib/providers/duffel";
+import { getDevelopmentEndpointUnavailableStatus } from "@/lib/api/developmentEndpoint";
+import { getDuffelConfig } from "@/lib/providers/duffelConfig";
+import {
+  duffelFlightProvider,
+  normalizeDuffelError,
+} from "@/lib/providers/duffel";
 
 export async function GET(): Promise<NextResponse> {
+  const unavailableStatus = getDevelopmentEndpointUnavailableStatus();
+  if (unavailableStatus) {
+    return new NextResponse(null, { status: unavailableStatus });
+  }
+
   try {
+    const { mode: duffelMode } = getDuffelConfig();
     const offers = await duffelFlightProvider.searchOneWay({
       origin: "BNE",
       destination: "BKK",
@@ -15,12 +26,13 @@ export async function GET(): Promise<NextResponse> {
     });
 
     return NextResponse.json({
+      duffelMode,
       count: offers.length,
       offers: offers.slice(0, 10),
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown Duffel example error.";
+    const normalizedError = normalizeDuffelError(error);
 
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json({ error: normalizedError.message }, { status: 500 });
   }
 }

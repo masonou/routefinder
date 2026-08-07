@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { getDevelopmentEndpointUnavailableStatus } from "@/lib/api/developmentEndpoint";
 import { planTrip } from "@/lib/planner/planTrip";
 import {
   duffelFlightProvider,
@@ -7,6 +8,11 @@ import {
 } from "@/lib/providers/duffel";
 
 export async function GET(): Promise<NextResponse> {
+  const unavailableStatus = getDevelopmentEndpointUnavailableStatus();
+  if (unavailableStatus) {
+    return new NextResponse(null, { status: unavailableStatus });
+  }
+
   try {
     const itineraries = await planTrip(
       {

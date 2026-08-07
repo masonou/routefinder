@@ -96,6 +96,16 @@ test("structured Duffel errors produce a non-empty message and preserve details"
   assert.match(normalized.message, /requestId=req_live_123/);
 });
 
+test("normalized errors redact credentials and authorization values", () => {
+  const privateToken = "duffel_live_do_not_disclose";
+  const normalized = normalizeDuffelError(
+    new Error(`Request failed with Authorization: Bearer ${privateToken}`)
+  );
+
+  assert.doesNotMatch(normalized.message, new RegExp(privateToken));
+  assert.match(normalized.message, /Authorization: \[REDACTED\]/);
+});
+
 test("retryable failures are retried and can succeed on the second attempt", async () => {
   let attempts = 0;
   const provider = createDuffelFlightProvider({
@@ -296,33 +306,38 @@ test("duplicate offer IDs are still removed", async () => {
   );
 });
 
-test("automated tests make no real Duffel API calls", async () => {
-  const originalToken = process.env.DUFFEL_ACCESS_TOKEN;
-  delete process.env.DUFFEL_ACCESS_TOKEN;
+test("automated tests refuse a live Duffel provider before any request", async () => {
+  let fetchCalls = 0;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    fetchCalls += 1;
+    throw new Error("External requests must not occur during tests.");
+  };
 
   try {
     const provider = createDuffelFlightProvider({
       delay: noDelay,
       warn: () => {},
       isDevelopment: true,
-      async searchExactDate(_input, departureDate) {
-        return [createOffer(`offer-${departureDate}`, `${departureDate}T08:00:00`)];
-      },
+      getConfig: () => ({
+        mode: "live",
+        accessToken: "duffel_live_test_only",
+      }),
     });
 
-    const offers = await provider.searchOneWay({
-      ...sampleInput,
-      departureWindow: {
-        start: "2026-09-09",
-        end: "2026-09-09",
-      },
-    });
-
-    assert.equal(offers.length, 1);
-    assert.equal(offers[0]?.id, "offer-2026-09-09");
+    await assert.rejects(
+      () =>
+        provider.searchOneWay({
+          ...sampleInput,
+          departureWindow: {
+            start: "2026-09-09",
+            end: "2026-09-09",
+          },
+        }),
+      /Refusing to initialize the live Duffel provider while automated tests are running/
+    );
+    assert.equal(fetchCalls, 0);
   } finally {
-    if (originalToken !== undefined) {
-      process.env.DUFFEL_ACCESS_TOKEN = originalToken;
-    }
+    globalThis.fetch = originalFetch;
   }
 });

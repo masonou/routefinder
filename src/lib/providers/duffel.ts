@@ -1,12 +1,16 @@
 import { Duffel } from "@duffel/api";
 
+import {
+  MAX_CONCURRENT_DUFFEL_EXACT_DATE_SEARCHES,
+  MAX_DUFFEL_EXACT_DATE_ATTEMPTS,
+} from "../constants/duffel.ts";
 import { enumerateDateWindow } from "../utils/dateWindow.ts";
 import type { FlightOffer, FlightSegment } from "../../types/flight.ts";
 
+import { getDuffelConfig } from "./duffelConfig.ts";
+import type { DuffelConfig } from "./duffelConfig.ts";
 import type { FlightProvider, FlightSearchInput } from "./types.ts";
 
-const MAX_CONCURRENT_DUFFEL_SEARCHES = 3;
-const MAX_DUFFEL_ATTEMPTS = 3;
 const RETRYABLE_DUFFEL_STATUSES = new Set([429, 503, 504]);
 const DEFAULT_RETRY_DELAYS_MS = [500, 1000] as const;
 
@@ -60,6 +64,7 @@ type WarningFunction = (message: string) => void;
 
 type CreateDuffelFlightProviderOptions = {
   searchExactDate?: ExactDateSearcher;
+  getConfig?: () => DuffelConfig;
   delay?: DelayFunction;
   warn?: WarningFunction;
   isDevelopment?: boolean;
@@ -85,16 +90,25 @@ class DuffelSearchError extends Error {
   }
 }
 
-function getDuffelClient(): Duffel {
-  const accessToken = process.env.DUFFEL_ACCESS_TOKEN;
+function getDuffelClient(loadConfig = getDuffelConfig): Duffel {
+  const config = loadConfig();
 
-  if (!accessToken) {
+  if (config.mode === "live" && isAutomatedTestEnvironment()) {
     throw new Error(
-      "DUFFEL_ACCESS_TOKEN is missing. Add it to .env.local before using the Duffel provider."
+      "Refusing to initialize the live Duffel provider while automated tests are running."
     );
   }
 
-  return new Duffel({ token: accessToken });
+  return new Duffel({ token: config.accessToken });
+}
+
+function isAutomatedTestEnvironment(): boolean {
+  return (
+    process.env.NODE_ENV === "test" ||
+    process.env.NODE_TEST_CONTEXT !== undefined ||
+    process.env.VITEST !== undefined ||
+    process.env.JEST_WORKER_ID !== undefined
+  );
 }
 
 function isRecord(value: unknown): value is RecordValue {
@@ -188,8 +202,18 @@ function formatNormalizedMessage(
   ].filter((part): part is string => part !== null);
 
   return metadata.length > 0
-    ? `${safeBaseMessage} [${metadata.join(", ")}]`
-    : safeBaseMessage;
+    ? `${redactSensitiveDetails(safeBaseMessage)} [${metadata.join(", ")}]`
+    : redactSensitiveDetails(safeBaseMessage);
+}
+
+function redactSensitiveDetails(message: string): string {
+  return message
+    .replace(
+      /((?:authorization|access[_ -]?token)\s*[:=]\s*)(?:bearer\s+)?[^\s,;\]}]+/gi,
+      "$1[REDACTED]"
+    )
+    .replace(/(bearer\s+)[^\s,;\]}]+/gi, "$1[REDACTED]")
+    .replace(/duffel_(?:live|test)_[^\s,;\]}]+/gi, "[REDACTED]");
 }
 
 export function normalizeDuffelError(error: unknown): NormalizedDuffelError {
@@ -278,7 +302,7 @@ function getRetryDelay(
   failure: NormalizedDuffelError,
   attemptNumber: number
 ): number | undefined {
-  if (attemptNumber >= MAX_DUFFEL_ATTEMPTS - 1) {
+  if (attemptNumber >= MAX_DUFFEL_EXACT_DATE_ATTEMPTS - 1) {
     return undefined;
   }
 
@@ -299,7 +323,11 @@ async function runExactDateSearchWithRetries(
 ): Promise<ExactDateSearchResult> {
   let lastFailure: NormalizedDuffelError | undefined;
 
-  for (let attemptNumber = 0; attemptNumber < MAX_DUFFEL_ATTEMPTS; attemptNumber += 1) {
+  for (
+    let attemptNumber = 0;
+    attemptNumber < MAX_DUFFEL_EXACT_DATE_ATTEMPTS;
+    attemptNumber += 1
+  ) {
     try {
       const offers = await searchExactDate(input, departureDate);
       return {
@@ -333,7 +361,7 @@ async function runExactDateSearchWithRetries(
 
   if (isDevelopment) {
     warn(
-      `Duffel search skipped ${input.origin} → ${input.destination} on ${departureDate} after ${MAX_DUFFEL_ATTEMPTS} attempts: ${failure.message}`
+      `Duffel search skipped ${input.origin} → ${input.destination} on ${departureDate} after ${MAX_DUFFEL_EXACT_DATE_ATTEMPTS} attempts: ${failure.message}`
     );
   }
 
@@ -484,7 +512,8 @@ export function createDuffelFlightProvider(
     async searchOneWay(input: FlightSearchInput) {
       const departureDates = enumerateDateWindow(input.departureWindow);
       const searchExactDate =
-        options.searchExactDate ?? createSearchExactDate(getDuffelClient());
+        options.searchExactDate ??
+        createSearchExactDate(getDuffelClient(options.getConfig));
       const offers: FlightOffer[] = [];
       const failedDates: ExactDateSearchResult[] = [];
       let successfulDates = 0;
@@ -492,11 +521,11 @@ export function createDuffelFlightProvider(
       for (
         let chunkStart = 0;
         chunkStart < departureDates.length;
-        chunkStart += MAX_CONCURRENT_DUFFEL_SEARCHES
+        chunkStart += MAX_CONCURRENT_DUFFEL_EXACT_DATE_SEARCHES
       ) {
         const dateChunk = departureDates.slice(
           chunkStart,
-          chunkStart + MAX_CONCURRENT_DUFFEL_SEARCHES
+          chunkStart + MAX_CONCURRENT_DUFFEL_EXACT_DATE_SEARCHES
         );
 
         const chunkResults = await Promise.allSettled(

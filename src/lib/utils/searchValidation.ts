@@ -6,6 +6,7 @@ import type { TripRequest } from "../../types/trip.ts";
 const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1000;
 
+// Keep the user trip window bounded to protect live API usage and cost, not just UX.
 export const MAX_TRIP_WINDOW_DAYS = 14;
 
 export interface SearchFormValues {
