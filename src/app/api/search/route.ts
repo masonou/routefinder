@@ -1,5 +1,11 @@
 import { NextResponse } from "next/server";
 
+import {
+  buildSearchCacheKey,
+  getSearchCache,
+  getSearchCacheResponseHeaders,
+  runCachedSearch,
+} from "@/lib/cache/searchCache";
 import { planTrip } from "@/lib/planner/planTrip";
 import {
   duffelFlightProvider,
@@ -23,12 +29,20 @@ export async function POST(request: Request): Promise<NextResponse> {
   try {
     const searchRequest = validateSearchApiBody(body);
     const tripRequest = toTripRequest(searchRequest);
-    const itineraries = await planTrip(tripRequest, duffelFlightProvider);
-
-    return NextResponse.json({
-      count: itineraries.length,
-      itineraries,
+    const cacheKey = buildSearchCacheKey(searchRequest);
+    const searchResult = await runCachedSearch({
+      key: cacheKey,
+      cache: getSearchCache(),
+      async load() {
+        const itineraries = await planTrip(tripRequest, duffelFlightProvider);
+        return { count: itineraries.length, itineraries };
+      },
     });
+
+    return NextResponse.json(
+      searchResult.value,
+      { headers: getSearchCacheResponseHeaders(searchResult.cacheStatus) }
+    );
   } catch (error) {
     if (error instanceof SearchValidationError) {
       return NextResponse.json({ error: error.message }, { status: 400 });

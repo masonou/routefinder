@@ -41,6 +41,14 @@ The `planner` modules contain the product logic for building and ranking one-way
 
 V1 currently considers only Bangkok Suvarnabhumi (`BKK`) as a candidate hub. The mock provider is ready for local development and testing, while the Duffel provider is intentionally left unimplemented until the current API contract is verified.
 
+## Search caching
+
+Public Routefinder searches are cached for 5 minutes using Redis. Identical searches
+within that window reuse the previous planner result instead of making new Duffel API
+calls. Empty searches are cached for 1 minute. If Redis is not configured, Routefinder
+falls back to uncached searching. Production request rate limiting for `/api/search` is
+intended to be configured at the Vercel WAF level.
+
 ```ts
 import { planTrip } from "@/lib/planner/planTrip";
 import { mockFlightProvider } from "@/lib/providers/mockFlightProvider";
@@ -65,6 +73,6 @@ const itineraries = await planTrip(request, mockFlightProvider);
 ## Manual verification
 
 1. Select Brisbane and Larnaca from the airport suggestions.
-2. Choose an earliest departure of `2026-08-10` and latest arrival of `2026-08-18`.
-3. Submit the form and confirm the URL contains only `origin`, `destination`, `earliestDeparture`, and `latestArrival`.
-4. Confirm every displayed itinerary departs on or after 10 August, arrives in Larnaca by 18 August, and includes a 2–6 night Bangkok stay.
+2. Choose an earliest departure of `2026-08-10`.
+3. Submit the form and confirm the URL contains only `origin`, `destination`, and `earliestDeparture`.
+4. Confirm each itinerary includes a 2–6 night Bangkok stay and may depart up to three days after the selected date.
