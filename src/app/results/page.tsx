@@ -6,7 +6,7 @@ import {
   createSearchRequestFromFormValues,
   type SearchFormValues,
 } from "../../lib/utils/searchValidation.ts";
-import { formatDateRangeCompact } from "../../lib/utils/formatFlight.ts";
+import { formatDateLabel } from "../../lib/utils/formatFlight.ts";
 
 type ResultsPageProps = {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
@@ -35,7 +35,6 @@ export default async function ResultsPage({ searchParams }: ResultsPageProps) {
     origin: readQueryValue(params, "origin") ?? "",
     destination: readQueryValue(params, "destination") ?? "",
     earliestDeparture: readQueryValue(params, "earliestDeparture") ?? "",
-    latestArrival: readQueryValue(params, "latestArrival") ?? "",
   };
   const request = parseRequest(values);
 
@@ -67,7 +66,7 @@ export default async function ResultsPage({ searchParams }: ResultsPageProps) {
           </p>
           <p className="text-sm text-stone-700">via Bangkok</p>
           <p className="text-sm text-stone-700">
-            {formatDateRangeCompact(request.earliestDeparture, request.latestArrival)}
+            Depart from {formatDateLabel(request.earliestDeparture)}
           </p>
           <Link href="/" className="text-sm text-blue-700 underline">
             New search

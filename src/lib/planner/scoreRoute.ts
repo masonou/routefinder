@@ -1,5 +1,5 @@
-import { TARGET_HUB_STAY_NIGHTS } from "@/lib/constants/planner";
-import type { Itinerary } from "@/types/itinerary";
+import { TARGET_HUB_STAY_NIGHTS } from "../constants/planner.ts";
+import type { Itinerary } from "../../types/itinerary.ts";
 
 const PRICE_WEIGHT = 1;
 const DURATION_WEIGHT = 0.08;

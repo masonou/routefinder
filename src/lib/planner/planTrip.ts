@@ -1,5 +1,5 @@
-import { MAX_RESULTS } from "@/lib/constants/planner";
-import { selectDiverseItineraries } from "@/lib/planner/deduplicateItineraries";
+import { MAX_RESULTS } from "../constants/planner.ts";
+import { selectDiverseItineraries } from "./deduplicateItineraries.ts";
 import {
   calculateHubStayNights,
   deriveSecondLegDepartureWindow,
@@ -7,12 +7,12 @@ import {
   isFlightWithinDepartureWindow,
   isReasonableFlight,
   isValidDateWindow,
-} from "@/lib/planner/filters";
-import { getCandidateHubs } from "@/lib/planner/hubs";
-import { scoreRoute } from "@/lib/planner/scoreRoute";
-import type { FlightProvider } from "@/lib/providers/types";
-import type { Itinerary } from "@/types/itinerary";
-import type { TripRequest } from "@/types/trip";
+} from "./filters.ts";
+import { getCandidateHubs } from "./hubs.ts";
+import { scoreRoute } from "./scoreRoute.ts";
+import type { FlightProvider } from "../providers/types.ts";
+import type { Itinerary } from "../../types/itinerary.ts";
+import type { TripRequest } from "../../types/trip.ts";
 
 function normaliseAirportCode(code: string): string {
   return code.trim().toUpperCase();
@@ -56,11 +56,14 @@ export async function planTrip(
     throw new Error("Departure window must be a valid inclusive ISO date range.");
   }
 
-  if (!isValidDateWindow(request.arrivalWindow)) {
+  if (request.arrivalWindow && !isValidDateWindow(request.arrivalWindow)) {
     throw new Error("Arrival window must be a valid inclusive ISO date range.");
   }
 
-  if (compareIsoDates(request.departureWindow.start, request.arrivalWindow.end) > 0) {
+  if (
+    request.arrivalWindow &&
+    compareIsoDates(request.departureWindow.start, request.arrivalWindow.end) > 0
+  ) {
     throw new Error("Departure window cannot begin after the arrival window ends.");
   }
 

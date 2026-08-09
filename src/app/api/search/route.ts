@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 
-import { MIN_HUB_STAY_NIGHTS } from "@/lib/constants/planner";
 import { planTrip } from "@/lib/planner/planTrip";
 import {
   duffelFlightProvider,
@@ -8,9 +7,9 @@ import {
 } from "@/lib/providers/duffel";
 import {
   SearchValidationError,
+  toTripRequest,
   validateSearchApiBody,
 } from "@/lib/utils/searchValidation";
-import { subtractCalendarDays } from "@/lib/utils/dateWindow";
 
 export async function POST(request: Request): Promise<NextResponse> {
   let body: unknown;
@@ -23,24 +22,7 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   try {
     const searchRequest = validateSearchApiBody(body);
-    const departureWindow = {
-      start: searchRequest.earliestDeparture,
-      end: subtractCalendarDays(
-        searchRequest.latestArrival,
-        MIN_HUB_STAY_NIGHTS
-      ),
-    };
-    const arrivalWindow = {
-      start: searchRequest.earliestDeparture,
-      end: searchRequest.latestArrival,
-    };
-    const tripRequest = {
-      origin: searchRequest.origin,
-      destination: searchRequest.destination,
-      departureWindow,
-      arrivalWindow,
-      adults: searchRequest.adults,
-    };
+    const tripRequest = toTripRequest(searchRequest);
     const itineraries = await planTrip(tripRequest, duffelFlightProvider);
 
     return NextResponse.json({

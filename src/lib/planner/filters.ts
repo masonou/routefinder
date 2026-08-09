@@ -4,6 +4,7 @@ import {
   MAX_STOPS_PER_LEG,
   MIN_HUB_STAY_NIGHTS,
 } from "../constants/planner.ts";
+import { addCalendarDays } from "../utils/dateWindow.ts";
 import type { FlightOffer } from "../../types/flight.ts";
 import type { DateWindow } from "../../types/trip.ts";
 
@@ -169,7 +170,7 @@ export function isCompatibleConnection(
   firstLeg: FlightOffer,
   secondLeg: FlightOffer,
   hub: string,
-  arrivalWindow: DateWindow
+  arrivalWindow?: DateWindow
 ): boolean {
   if (!isReasonableFlight(firstLeg) || !isReasonableFlight(secondLeg)) {
     return false;
@@ -197,17 +198,12 @@ export function isCompatibleConnection(
     return false;
   }
 
-  return isArrivalWithinWindow(secondLeg, arrivalWindow);
-}
-
-function addDays(date: Date, days: number): string {
-  const next = new Date(date.getTime() + days * MILLISECONDS_PER_DAY);
-  return next.toISOString().slice(0, 10);
+  return !arrivalWindow || isArrivalWithinWindow(secondLeg, arrivalWindow);
 }
 
 export function deriveSecondLegDepartureWindow(
   firstLegOffers: FlightOffer[],
-  arrivalWindow: DateWindow
+  arrivalWindow?: DateWindow
 ): DateWindow | null {
   const arrivalDates = firstLegOffers
     .filter((offer) => isReasonableFlight(offer))
@@ -219,15 +215,15 @@ export function deriveSecondLegDepartureWindow(
     return null;
   }
 
-  const earliestArrival = parseIsoDate(arrivalDates[0]);
-  const latestArrival = parseIsoDate(arrivalDates[arrivalDates.length - 1]);
-  if (!earliestArrival || !latestArrival) {
-    return null;
-  }
-
-  const start = addDays(earliestArrival, MIN_HUB_STAY_NIGHTS);
-  const end = addDays(latestArrival, MAX_HUB_STAY_NIGHTS);
-  const cappedEnd = compareIsoDates(end, arrivalWindow.end) > 0 ? arrivalWindow.end : end;
+  const start = addCalendarDays(arrivalDates[0], MIN_HUB_STAY_NIGHTS);
+  const end = addCalendarDays(
+    arrivalDates[arrivalDates.length - 1],
+    MAX_HUB_STAY_NIGHTS
+  );
+  const cappedEnd =
+    arrivalWindow && compareIsoDates(end, arrivalWindow.end) > 0
+      ? arrivalWindow.end
+      : end;
 
   if (compareIsoDates(start, cappedEnd) > 0) {
     return null;

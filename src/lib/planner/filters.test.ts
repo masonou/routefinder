@@ -5,6 +5,7 @@ import {
   calculateHubStayNights,
   deriveSecondLegDepartureWindow,
   isArrivalWithinWindow,
+  isCompatibleConnection,
 } from "./filters.ts";
 import type { FlightOffer } from "../../types/flight";
 
@@ -128,6 +129,26 @@ test("deriveSecondLegDepartureWindow caps the end date to the final arrival wind
   );
 });
 
+test("deriveSecondLegDepartureWindow has no final-arrival cap when one is not supplied", () => {
+  const firstLegOffers = [
+    createFlightOffer({
+      id: "first-leg-a",
+      destination: "BKK",
+      arrivalAt: "2026-09-10T10:05:00",
+    }),
+    createFlightOffer({
+      id: "first-leg-b",
+      destination: "BKK",
+      arrivalAt: "2026-09-12T10:05:00",
+    }),
+  ];
+
+  assert.deepEqual(deriveSecondLegDepartureWindow(firstLegOffers), {
+    start: "2026-09-12",
+    end: "2026-09-18",
+  });
+});
+
 test("a final arrival on the deadline is accepted and one after it is rejected", () => {
   const deadline = { start: "2026-09-10", end: "2026-09-18" };
   assert.equal(
@@ -136,6 +157,28 @@ test("a final arrival on the deadline is accepted and one after it is rejected",
   );
   assert.equal(
     isArrivalWithinWindow(createFlightOffer({ arrivalAt: "2026-09-19T00:01:00+03:00" }), deadline),
+    false
+  );
+});
+
+test("connection compatibility only checks final arrival when an arrival window is supplied", () => {
+  const firstLeg = createFlightOffer({
+    destination: "BKK",
+    departureAt: "2026-09-10T08:00:00",
+    arrivalAt: "2026-09-10T12:00:00",
+  });
+  const secondLeg = createFlightOffer({
+    origin: "BKK",
+    departureAt: "2026-09-16T08:00:00",
+    arrivalAt: "2026-09-20T12:00:00",
+  });
+
+  assert.equal(isCompatibleConnection(firstLeg, secondLeg, "BKK"), true);
+  assert.equal(
+    isCompatibleConnection(firstLeg, secondLeg, "BKK", {
+      start: "2026-09-10",
+      end: "2026-09-15",
+    }),
     false
   );
 });

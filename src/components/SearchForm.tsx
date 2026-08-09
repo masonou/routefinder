@@ -16,7 +16,6 @@ const INITIAL_VALUES: SearchFormValues = {
   origin: "",
   destination: "",
   earliestDeparture: "",
-  latestArrival: "",
 };
 
 function hasErrors(errors: SearchFormErrors): boolean {
@@ -34,8 +33,8 @@ export function SearchForm() {
     setValues((current) => ({ ...current, [field]: airport?.iataCode ?? "" }));
   }
 
-  function updateDate(field: "earliestDeparture" | "latestArrival", value: string) {
-    setValues((current) => ({ ...current, [field]: value }));
+  function updateDate(value: string) {
+    setValues((current) => ({ ...current, earliestDeparture: value }));
   }
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -77,27 +76,13 @@ export function SearchForm() {
           id="earliest-departure"
           type="date"
           value={values.earliestDeparture}
-          onChange={(event) => updateDate("earliestDeparture", event.target.value)}
+          onChange={(event) => updateDate(event.target.value)}
           aria-describedby={errors.dates ? "dates-error" : undefined}
           aria-invalid={errors.dates ? "true" : "false"}
           className="w-full rounded-md border border-stone-300 px-3 py-2 text-base text-stone-950 outline-none focus:border-blue-600"
         />
       </div>
-      <div className="space-y-2">
-        <label className="block text-sm font-medium text-stone-900" htmlFor="latest-arrival">
-          Latest arrival
-        </label>
-        <input
-          id="latest-arrival"
-          type="date"
-          value={values.latestArrival}
-          onChange={(event) => updateDate("latestArrival", event.target.value)}
-          aria-describedby={errors.dates ? "dates-error" : undefined}
-          aria-invalid={errors.dates ? "true" : "false"}
-          className="w-full rounded-md border border-stone-300 px-3 py-2 text-base text-stone-950 outline-none focus:border-blue-600"
-        />
-        {errors.dates ? <p id="dates-error" className="text-sm text-red-700">{errors.dates}</p> : null}
-      </div>
+      {errors.dates ? <p id="dates-error" className="text-sm text-red-700">{errors.dates}</p> : null}
       <button type="submit" className="inline-flex w-full items-center justify-center rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700">
         Find routes
       </button>

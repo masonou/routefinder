@@ -4,9 +4,29 @@ import test from "node:test";
 import { pathToFileURL } from "node:url";
 
 import {
+  addCalendarDays,
   enumerateDateWindow,
   MAX_FLEXIBLE_SEARCH_DAYS,
 } from "./dateWindow.ts";
+
+test("addCalendarDays derives the inclusive four-date departure window", () => {
+  assert.equal(addCalendarDays("2026-08-17", 3), "2026-08-20");
+  assert.deepEqual(
+    enumerateDateWindow({ start: "2026-08-17", end: addCalendarDays("2026-08-17", 3) }),
+    ["2026-08-17", "2026-08-18", "2026-08-19", "2026-08-20"]
+  );
+});
+
+test("addCalendarDays handles month, year, and leap-day boundaries", () => {
+  assert.equal(addCalendarDays("2026-08-31", 1), "2026-09-01");
+  assert.equal(addCalendarDays("2026-12-31", 1), "2027-01-01");
+  assert.equal(addCalendarDays("2028-02-28", 1), "2028-02-29");
+  assert.equal(addCalendarDays("2028-02-29", 1), "2028-03-01");
+});
+
+test("addCalendarDays rejects malformed calendar dates", () => {
+  assert.throws(() => addCalendarDays("2026-02-30", 1), /Invalid ISO date/);
+});
 
 test("enumerateDateWindow returns one date for a one-day window", () => {
   assert.deepEqual(
@@ -99,11 +119,11 @@ test("enumerateDateWindow is not affected by the local machine timezone", () => 
     new URL("./dateWindow.ts", import.meta.url).pathname
   ).href;
   const script = `
-    import { enumerateDateWindow } from ${JSON.stringify(moduleUrl)};
-    process.stdout.write(JSON.stringify(enumerateDateWindow({
-      start: "2026-09-09",
-      end: "2026-09-11",
-    })));
+    import { addCalendarDays, enumerateDateWindow } from ${JSON.stringify(moduleUrl)};
+    process.stdout.write(JSON.stringify({
+      dates: enumerateDateWindow({ start: "2026-09-09", end: "2026-09-11" }),
+      addedDate: addCalendarDays("2026-09-30", 3),
+    }));
   `;
 
   const output = execFileSync(
@@ -118,9 +138,8 @@ test("enumerateDateWindow is not affected by the local machine timezone", () => 
     }
   );
 
-  assert.deepEqual(JSON.parse(output), [
-    "2026-09-09",
-    "2026-09-10",
-    "2026-09-11",
-  ]);
+  assert.deepEqual(JSON.parse(output), {
+    dates: ["2026-09-09", "2026-09-10", "2026-09-11"],
+    addedDate: "2026-10-03",
+  });
 });

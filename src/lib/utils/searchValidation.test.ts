@@ -3,7 +3,7 @@ import test from "node:test";
 
 import { findAirportByCode } from "../../data/airports.ts";
 import { searchAirports } from "./airportSearch.ts";
-import { MIN_HUB_STAY_NIGHTS } from "../constants/planner.ts";
+import { DEPARTURE_FLEX_DAYS } from "../constants/planner.ts";
 import {
   SearchValidationError,
   buildResultsUrl,
@@ -17,7 +17,6 @@ const validValues = {
   origin: "BNE",
   destination: "LCA",
   earliestDeparture: "2099-08-10",
-  latestArrival: "2099-08-18",
 };
 
 test("an exact IATA search ranks first", () => {
@@ -57,44 +56,27 @@ test("origin and destination cannot be identical", () => {
   assert.equal(validateSearchFormValues({ ...validValues, destination: "BNE" }).destination, "Choose different airports.");
 });
 
-test("the shortest window that allows the minimum hub stay is accepted", () => {
-  const latestArrival = "2099-08-12";
+test("a past earliest departure is rejected", () => {
   assert.equal(
-    validateSearchFormValues({ ...validValues, latestArrival }).dates,
-    undefined
-  );
-  assert.equal(MIN_HUB_STAY_NIGHTS, 2);
-});
-
-test("a window too short for the hub stay is rejected", () => {
-  assert.equal(
-    validateSearchFormValues({ ...validValues, latestArrival: "2099-08-11" }).dates,
-    "Allow at least 2 nights."
+    validateSearchFormValues({ ...validValues, earliestDeparture: "2000-01-01" }).dates,
+    "Dates cannot be in the past."
   );
 });
 
-test("a fourteen-day inclusive window is accepted and fifteen days is rejected", () => {
-  assert.equal(validateSearchFormValues({ ...validValues, latestArrival: "2099-08-23" }).dates, undefined);
-  assert.equal(
-    validateSearchFormValues({ ...validValues, latestArrival: "2099-08-24" }).dates,
-    "Maximum trip window is 14 days."
-  );
-});
-
-test("API validation defaults adults and derives the planner windows", () => {
+test("API validation no longer requires latest arrival and derives a four-day window", () => {
   const publicRequest = validateSearchApiBody(validValues);
   assert.deepEqual(toTripRequest(publicRequest), {
     origin: "BNE",
     destination: "LCA",
-    departureWindow: { start: "2099-08-10", end: "2099-08-16" },
-    arrivalWindow: { start: "2099-08-10", end: "2099-08-18" },
+    departureWindow: { start: "2099-08-10", end: "2099-08-13" },
     adults: 1,
   });
+  assert.equal(DEPARTURE_FLEX_DAYS, 3);
 });
 
 test("buildResultsUrl uses only the simplified search parameters", () => {
   assert.equal(
     buildResultsUrl(validValues),
-    "/results?origin=BNE&destination=LCA&earliestDeparture=2099-08-10&latestArrival=2099-08-18"
+    "/results?origin=BNE&destination=LCA&earliestDeparture=2099-08-10"
   );
 });

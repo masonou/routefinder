@@ -68,7 +68,6 @@ export function ResultsClient({ request }: ResultsClientProps) {
     request.origin,
     request.destination,
     request.earliestDeparture,
-    request.latestArrival,
     request.adults,
     retryToken,
   ]);
