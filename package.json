@@ -9,7 +9,6 @@
     "lint": "eslint"
   },
   "dependencies": {
-    "@duffel/api": "^4.28.0",
     "@upstash/redis": "^1.38.2",
     "next": "16.2.12",
     "react": "19.2.4",

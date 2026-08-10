@@ -4,7 +4,7 @@ import { getRedisClient } from "./redis.ts";
 export const SEARCH_CACHE_TTL_SECONDS = 300;
 export const EMPTY_SEARCH_CACHE_TTL_SECONDS = 60;
 
-// Reusing a recent planner result reduces repeated Duffel usage and cost. Fares are
+// Reusing a recent planner result reduces repeated flight-provider usage and cost. Fares are
 // indicative and can change, so V1 intentionally keeps this cache to five minutes.
 export interface SearchCacheValue {
   count: number;
@@ -44,7 +44,7 @@ function isSearchCacheValue(value: unknown): value is SearchCacheValue {
 
 export function buildSearchCacheKey(input: SearchCacheKeyInput): string {
   return [
-    "routefinder:search:v1",
+    "routefinder:search:v2",
     input.origin.trim().toUpperCase(),
     input.destination.trim().toUpperCase(),
     input.earliestDeparture,

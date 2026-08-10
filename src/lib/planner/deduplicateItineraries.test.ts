@@ -61,8 +61,8 @@ test("exact physical journeys with different offer IDs are reduced and the cheap
     id: "offer-b",
     totalPrice: { amount: 800, currency: "AUD" },
     score: 7000,
-    firstLeg: { ...expensive.firstLeg, id: "different-first", provider: "duffel", indicativePrice: { amount: 300, currency: "AUD" } },
-    secondLeg: { ...expensive.secondLeg, id: "different-second", provider: "duffel", indicativePrice: { amount: 500, currency: "AUD" } },
+    firstLeg: { ...expensive.firstLeg, id: "different-first", provider: "searchapi", indicativePrice: { amount: 300, currency: "AUD" } },
+    secondLeg: { ...expensive.secondLeg, id: "different-second", provider: "searchapi", indicativePrice: { amount: 500, currency: "AUD" } },
   });
   assert.deepEqual(selectDiverseItineraries([expensive, cheaper], 5).map((item) => item.id), ["offer-b"]);
 });

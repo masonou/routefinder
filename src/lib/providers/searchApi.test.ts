@@ -151,12 +151,8 @@ test("maps direct and connecting SearchAPI result groups into provider-neutral o
 
 test("uses one exact-date request for every date in a flexible window", async () => {
   const requestedDates: string[] = [];
-  let providerRequests = 0;
   const provider = createSearchApiFlightProvider({
     apiKey: "searchapi_test_secret",
-    onRequest: () => {
-      providerRequests += 1;
-    },
     fetch: async (input) => {
       requestedDates.push(new URL(String(input)).searchParams.get("outbound_date") ?? "");
       return jsonResponse({ best_flights: [] });
@@ -170,7 +166,6 @@ test("uses one exact-date request for every date in a flexible window", async ()
 
   assert.deepEqual(offers, []);
   assert.deepEqual(requestedDates, ["2026-08-17", "2026-08-18", "2026-08-19"]);
-  assert.equal(providerRequests, 3);
 });
 
 test("keeps the shared maximum flexible-search date protection", async () => {

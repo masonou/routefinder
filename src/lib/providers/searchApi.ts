@@ -26,9 +26,6 @@ export type SearchApiFlightProviderOptions = {
   fetch?: FetchFunction;
   endpoint?: string;
   timeoutMs?: number;
-  // Optional server-side instrumentation for diagnostic callers. No request details
-  // are passed so this cannot expose credentials through the callback.
-  onRequest?: () => void;
 };
 
 class SearchApiError extends Error {
@@ -312,8 +309,7 @@ async function searchExactDate(
   departureDate: string,
   options: Required<
     Pick<SearchApiFlightProviderOptions, "apiKey" | "fetch" | "endpoint" | "timeoutMs">
-  >,
-  onRequest?: () => void
+  >
 ): Promise<FlightOffer[]> {
   const query = new URLSearchParams({
     engine: "google_flights",
@@ -331,7 +327,6 @@ async function searchExactDate(
 
   let response: Response;
   try {
-    onRequest?.();
     response = await options.fetch(`${options.endpoint}?${query.toString()}`, {
       method: "GET",
       headers: {
@@ -424,9 +419,7 @@ export class SearchApiFlightProvider implements FlightProvider {
     const offers: FlightOffer[] = [];
 
     for (const departureDate of departureDates) {
-      offers.push(
-        ...(await searchExactDate(input, departureDate, searchOptions, this.options.onRequest))
-      );
+      offers.push(...(await searchExactDate(input, departureDate, searchOptions)));
     }
 
     return deduplicateOffersById(offers);
