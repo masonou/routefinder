@@ -1,7 +1,13 @@
 import { enumerateDateWindow } from "../utils/dateWindow.ts";
 import type { FlightOffer, FlightSegment } from "../../types/flight.ts";
+import type { BookingOption } from "../../types/booking.ts";
 
-import type { FlightProvider, FlightSearchInput } from "./types.ts";
+import type {
+  BookingOptionsInput,
+  BookingOptionsProvider,
+  FlightProvider,
+  FlightSearchInput,
+} from "./types.ts";
 
 const SEARCH_API_URL = "https://www.searchapi.io/api/v1/search";
 const SEARCH_API_TIMEOUT_MS = 15_000;
@@ -32,7 +38,10 @@ class SearchApiError extends Error {
   readonly status?: number;
   readonly retryable: boolean;
 
-  constructor(message: string, details: Omit<NormalizedSearchApiError, "message">) {
+  constructor(
+    message: string,
+    details: Omit<NormalizedSearchApiError, "message">,
+  ) {
     super(message);
     this.name = "SearchApiError";
     this.status = details.status;
@@ -44,23 +53,53 @@ function isRecord(value: unknown): value is RecordValue {
   return typeof value === "object" && value !== null;
 }
 
-function getNonEmptyString(record: RecordValue, key: string): string | undefined {
+function getNonEmptyString(
+  record: RecordValue,
+  key: string,
+): string | undefined {
   const value = record[key];
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
-function getPositiveNumber(record: RecordValue, key: string): number | undefined {
+function getPositiveNumber(
+  record: RecordValue,
+  key: string,
+): number | undefined {
   const value = record[key];
   return typeof value === "number" && Number.isFinite(value) && value > 0
     ? value
     : undefined;
 }
 
+function getNonNegativeNumber(
+  record: RecordValue,
+  key: string,
+): number | undefined {
+  const value = record[key];
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? value
+    : undefined;
+}
+
+function getStringArray(
+  record: RecordValue,
+  key: string,
+): string[] | undefined {
+  const value = record[key];
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  return value.filter(
+    (item): item is string => typeof item === "string" && Boolean(item.trim()),
+  );
+}
+
 function redactSensitiveDetails(message: string): string {
   return message
     .replace(
       /((?:authorization|api[_ -]?key|searchapi_api_key)\s*[:=]\s*)(?:bearer\s+)?[^\s,;\]}]+/gi,
-      "$1[REDACTED]"
+      "$1[REDACTED]",
     )
     .replace(/(bearer\s+)[^\s,;\]}]+/gi, "$1[REDACTED]");
 }
@@ -72,7 +111,9 @@ function isTimeoutError(error: unknown): boolean {
   );
 }
 
-export function normalizeSearchApiError(error: unknown): NormalizedSearchApiError {
+export function normalizeSearchApiError(
+  error: unknown,
+): NormalizedSearchApiError {
   if (error instanceof SearchApiError) {
     return {
       message: redactSensitiveDetails(error.message),
@@ -96,12 +137,14 @@ export function normalizeSearchApiError(error: unknown): NormalizedSearchApiErro
 
   return {
     message,
-    retryable: /network|timed out|timeout|fetch failed|connection/i.test(message),
+    retryable: /network|timed out|timeout|fetch failed|connection/i.test(
+      message,
+    ),
   };
 }
 
 export function getSearchApiApiKey(
-  environment: Record<string, string | undefined> = process.env
+  environment: Record<string, string | undefined> = process.env,
 ): string {
   const apiKey = environment.SEARCHAPI_API_KEY?.trim();
   if (!apiKey) {
@@ -114,13 +157,19 @@ export function getSearchApiApiKey(
   return apiKey;
 }
 
-function createLocalTimestamp(date: string | undefined, time: string | undefined): string | null {
+function createLocalTimestamp(
+  date: string | undefined,
+  time: string | undefined,
+): string | null {
   if (!date || !time || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
     return null;
   }
 
   const parsedDate = new Date(`${date}T00:00:00.000Z`);
-  if (Number.isNaN(parsedDate.getTime()) || parsedDate.toISOString().slice(0, 10) !== date) {
+  if (
+    Number.isNaN(parsedDate.getTime()) ||
+    parsedDate.toISOString().slice(0, 10) !== date
+  ) {
     return null;
   }
 
@@ -150,7 +199,9 @@ function parseFlightNumber(value: string | undefined): {
   }
 
   const normalized = value.trim();
-  const match = /^([A-Za-z0-9]{2,3})\s*-?\s*([0-9][A-Za-z0-9]*)$/.exec(normalized);
+  const match = /^([A-Za-z0-9]{2,3})\s*-?\s*([0-9][A-Za-z0-9]*)$/.exec(
+    normalized,
+  );
   if (!match) {
     return { flightNumber: normalized };
   }
@@ -169,7 +220,9 @@ function mapSearchApiSegment(value: unknown): FlightSegment | null {
   const departureAirport = isRecord(value.departure_airport)
     ? value.departure_airport
     : undefined;
-  const arrivalAirport = isRecord(value.arrival_airport) ? value.arrival_airport : undefined;
+  const arrivalAirport = isRecord(value.arrival_airport)
+    ? value.arrival_airport
+    : undefined;
   if (!departureAirport || !arrivalAirport) {
     return null;
   }
@@ -178,17 +231,19 @@ function mapSearchApiSegment(value: unknown): FlightSegment | null {
   const destination = getNonEmptyString(arrivalAirport, "id");
   const departureAt = createLocalTimestamp(
     getNonEmptyString(departureAirport, "date"),
-    getNonEmptyString(departureAirport, "time")
+    getNonEmptyString(departureAirport, "time"),
   );
   const arrivalAt = createLocalTimestamp(
     getNonEmptyString(arrivalAirport, "date"),
-    getNonEmptyString(arrivalAirport, "time")
+    getNonEmptyString(arrivalAirport, "time"),
   );
   if (!origin || !destination || !departureAt || !arrivalAt) {
     return null;
   }
 
-  const flightNumber = parseFlightNumber(getNonEmptyString(value, "flight_number"));
+  const flightNumber = parseFlightNumber(
+    getNonEmptyString(value, "flight_number"),
+  );
   return {
     origin,
     destination,
@@ -215,7 +270,7 @@ function offerSignature(offer: Omit<FlightOffer, "id">): string {
           segment.airlineCode ?? "",
           segment.flightNumber ?? "",
           segment.airlineName,
-        ].join("~")
+        ].join("~"),
       )
       .join("|"),
     offer.indicativePrice.amount,
@@ -266,11 +321,46 @@ function mapSearchApiOffer(value: unknown): FlightOffer | null {
       amount: price,
       currency: "EUR",
     },
+    bookingReference: getNonEmptyString(value, "booking_token"),
   };
 
   return {
     id: `searchapi:${stableHash(offerSignature(normalizedOffer))}`,
     ...normalizedOffer,
+  };
+}
+
+function mapSearchApiBookingOption(value: unknown): BookingOption | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const isSplitBooking = value.is_split_booking === true;
+  const sellerName =
+    getNonEmptyString(value, "book_with") ??
+    (isSplitBooking ? "Split booking" : undefined);
+  const amount = getNonNegativeNumber(value, "price");
+  if (!sellerName || amount === undefined) {
+    return null;
+  }
+
+  const baggagePrices = getStringArray(value, "baggage_prices");
+
+  // SearchAPI booking_request represents the Google Flights booking action.
+  // Slow Layover does not use it yet because affiliate-link strategy has not
+  // been decided.
+  return {
+    sellerName,
+    price: { amount, currency: "EUR" },
+    flightNumbers: getStringArray(value, "flight_numbers") ?? [],
+    ...(getNonEmptyString(value, "fare_type")
+      ? { fareType: getNonEmptyString(value, "fare_type") }
+      : {}),
+    ...(getNonEmptyString(value, "option_title")
+      ? { optionTitle: getNonEmptyString(value, "option_title") }
+      : {}),
+    ...(baggagePrices ? { baggagePrices } : {}),
+    ...(isSplitBooking ? { isSplitBooking: true } : {}),
   };
 }
 
@@ -283,7 +373,7 @@ function getFlightGroups(response: RecordValue): unknown[] {
     }
 
     const containsFlightGroups = value.some(
-      (item) => isRecord(item) && Array.isArray(item.flights)
+      (item) => isRecord(item) && Array.isArray(item.flights),
     );
     if (KNOWN_FLIGHT_RESULT_GROUPS.has(key) || containsFlightGroups) {
       groups.push(...value);
@@ -308,8 +398,11 @@ async function searchExactDate(
   input: FlightSearchInput,
   departureDate: string,
   options: Required<
-    Pick<SearchApiFlightProviderOptions, "apiKey" | "fetch" | "endpoint" | "timeoutMs">
-  >
+    Pick<
+      SearchApiFlightProviderOptions,
+      "apiKey" | "fetch" | "endpoint" | "timeoutMs"
+    >
+  >,
 ): Promise<FlightOffer[]> {
   const query = new URLSearchParams({
     engine: "google_flights",
@@ -383,7 +476,8 @@ async function searchExactDate(
 
   const groups = getFlightGroups(body);
   const hasFlightResultArray = Object.entries(body).some(
-    ([key, value]) => KNOWN_FLIGHT_RESULT_GROUPS.has(key) && Array.isArray(value)
+    ([key, value]) =>
+      KNOWN_FLIGHT_RESULT_GROUPS.has(key) && Array.isArray(value),
   );
   if (groups.length === 0 && !hasFlightResultArray) {
     throw new SearchApiError("SearchAPI returned an unexpected response.", {
@@ -395,11 +489,93 @@ async function searchExactDate(
   return deduplicateOffersById(
     groups
       .map((group) => mapSearchApiOffer(group))
-      .filter((offer): offer is FlightOffer => offer !== null)
+      .filter((offer): offer is FlightOffer => offer !== null),
   );
 }
 
-export class SearchApiFlightProvider implements FlightProvider {
+async function fetchBookingOptions(
+  input: BookingOptionsInput,
+  options: Required<
+    Pick<
+      SearchApiFlightProviderOptions,
+      "apiKey" | "fetch" | "endpoint" | "timeoutMs"
+    >
+  >,
+): Promise<BookingOption[]> {
+  const query = new URLSearchParams({
+    engine: "google_flights",
+    flight_type: "one_way",
+    departure_id: input.origin,
+    arrival_id: input.destination,
+    outbound_date: input.departureDate,
+    booking_token: input.bookingReference,
+    adults: String(input.adults),
+    currency: "EUR",
+  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), options.timeoutMs);
+
+  let response: Response;
+  try {
+    response = await options.fetch(`${options.endpoint}?${query.toString()}`, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${options.apiKey}` },
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (isTimeoutError(error) || controller.signal.aborted) {
+      throw new SearchApiError("SearchAPI request timed out.", {
+        status: 504,
+        retryable: true,
+      });
+    }
+    throw new SearchApiError("SearchAPI network request failed.", {
+      retryable: true,
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  if (!response.ok) {
+    const message =
+      response.status === 401 || response.status === 403
+        ? "SearchAPI authentication failed."
+        : response.status === 429
+          ? "SearchAPI rate limit exceeded."
+          : response.status >= 500
+            ? "SearchAPI service is unavailable."
+            : "SearchAPI request failed.";
+    throw new SearchApiError(message, {
+      status: response.status,
+      retryable: response.status === 429 || response.status >= 500,
+    });
+  }
+
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch {
+    throw new SearchApiError("SearchAPI returned invalid JSON.", {
+      status: 502,
+      retryable: false,
+    });
+  }
+
+  if (!isRecord(body) || !Array.isArray(body.booking_options)) {
+    throw new SearchApiError("SearchAPI returned an unexpected response.", {
+      status: 502,
+      retryable: false,
+    });
+  }
+
+  return body.booking_options
+    .map((option) => mapSearchApiBookingOption(option))
+    .filter((option): option is BookingOption => option !== null);
+}
+
+export class SearchApiFlightProvider
+  implements FlightProvider, BookingOptionsProvider
+{
   readonly name = "searchapi";
   private readonly options: SearchApiFlightProviderOptions;
 
@@ -419,17 +595,36 @@ export class SearchApiFlightProvider implements FlightProvider {
     const offers: FlightOffer[] = [];
 
     for (const departureDate of departureDates) {
-      offers.push(...(await searchExactDate(input, departureDate, searchOptions)));
+      offers.push(
+        ...(await searchExactDate(input, departureDate, searchOptions)),
+      );
     }
 
     return deduplicateOffersById(offers);
   }
+
+  async getBookingOptions(
+    input: BookingOptionsInput,
+  ): Promise<BookingOption[]> {
+    const apiKey = this.options.apiKey?.trim() || getSearchApiApiKey();
+    return fetchBookingOptions(input, {
+      apiKey,
+      fetch: this.options.fetch ?? globalThis.fetch,
+      endpoint: this.options.endpoint ?? SEARCH_API_URL,
+      timeoutMs: this.options.timeoutMs ?? SEARCH_API_TIMEOUT_MS,
+    });
+  }
 }
 
 export function createSearchApiFlightProvider(
-  options: SearchApiFlightProviderOptions = {}
-): FlightProvider {
+  options: SearchApiFlightProviderOptions = {},
+): SearchApiFlightProvider {
   return new SearchApiFlightProvider(options);
 }
 
-export const searchApiFlightProvider: FlightProvider = createSearchApiFlightProvider();
+const defaultSearchApiProvider = createSearchApiFlightProvider();
+
+export const searchApiFlightProvider: FlightProvider = defaultSearchApiProvider;
+
+export const searchApiBookingOptionsProvider: BookingOptionsProvider =
+  defaultSearchApiProvider;

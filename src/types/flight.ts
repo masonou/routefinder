@@ -26,5 +26,7 @@ export interface FlightOffer {
   segments: FlightSegment[];
   // Price returned during discovery and ranking, which may differ from the final affiliate booking price.
   indicativePrice: Money;
+  // Opaque provider reference used only for an on-demand booking-options lookup.
+  bookingReference?: string;
   bookingUrl?: string;
 }

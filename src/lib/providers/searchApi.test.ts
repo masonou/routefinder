@@ -5,7 +5,7 @@ import {
   createSearchApiFlightProvider,
   normalizeSearchApiError,
 } from "./searchApi.ts";
-import type { FlightSearchInput } from "./types.ts";
+import type { BookingOptionsInput, FlightSearchInput } from "./types.ts";
 
 const directFlight = {
   flights: [
@@ -86,6 +86,14 @@ const sampleInput: FlightSearchInput = {
   adults: 1,
 };
 
+const bookingOptionsInput: BookingOptionsInput = {
+  bookingReference: "opaque-google-flights-booking-token",
+  origin: "BNE",
+  destination: "BKK",
+  departureDate: "2026-08-17",
+  adults: 2,
+};
+
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -100,7 +108,8 @@ test("maps direct and connecting SearchAPI result groups into provider-neutral o
     apiKey: "searchapi_test_secret",
     fetch: async (input, init) => {
       requestedUrl = String(input);
-      requestedAuthorization = new Headers(init?.headers).get("Authorization") ?? "";
+      requestedAuthorization =
+        new Headers(init?.headers).get("Authorization") ?? "";
       return jsonResponse({
         best_flights: [directFlight],
         other_flights: [connectingFlight],
@@ -121,12 +130,16 @@ test("maps direct and connecting SearchAPI result groups into provider-neutral o
   assert.equal(directOffer.origin, "BNE");
   assert.equal(directOffer.destination, "BKK");
   assert.equal(directOffer.durationMinutes, 410);
-  assert.deepEqual(directOffer.indicativePrice, { amount: 235, currency: "EUR" });
+  assert.deepEqual(directOffer.indicativePrice, {
+    amount: 235,
+    currency: "EUR",
+  });
   assert.equal(directOffer.segments[0]?.airlineName, "Jetstar");
   assert.equal(directOffer.segments[0]?.airlineCode, "JQ");
   assert.equal(directOffer.segments[0]?.flightNumber, "65");
   assert.equal(directOffer.departureAt, "2026-08-17T23:30:00");
   assert.equal(directOffer.arrivalAt, "2026-08-18T05:20:00");
+  assert.equal(directOffer.bookingReference, directFlight.booking_token);
   assert.doesNotMatch(directOffer.departureAt, /Z$/);
   assert.equal(connectingOffer.durationMinutes, 565);
   assert.equal(connectingOffer.stops, 1);
@@ -135,7 +148,10 @@ test("maps direct and connecting SearchAPI result groups into provider-neutral o
   assert.equal(connectingOffer.segments[1]?.flightNumber, "801");
 
   const request = new URL(requestedUrl);
-  assert.equal(request.origin + request.pathname, "https://www.searchapi.io/api/v1/search");
+  assert.equal(
+    request.origin + request.pathname,
+    "https://www.searchapi.io/api/v1/search",
+  );
   assert.equal(request.searchParams.get("engine"), "google_flights");
   assert.equal(request.searchParams.get("flight_type"), "one_way");
   assert.equal(request.searchParams.get("departure_id"), "BNE");
@@ -149,12 +165,158 @@ test("maps direct and connecting SearchAPI result groups into provider-neutral o
   assert.equal(requestedAuthorization, "Bearer searchapi_test_secret");
 });
 
+test("leaves bookingReference undefined when SearchAPI omits a booking token", async () => {
+  const flightWithoutBookingToken = {
+    ...directFlight,
+    booking_token: undefined,
+  };
+  const provider = createSearchApiFlightProvider({
+    apiKey: "searchapi_test_secret",
+    fetch: async () =>
+      jsonResponse({ best_flights: [flightWithoutBookingToken] }),
+  });
+
+  const [offer] = await provider.searchOneWay(sampleInput);
+  assert.equal(offer?.bookingReference, undefined);
+});
+
+test("requests and normalizes SearchAPI booking options without exposing booking actions", async () => {
+  let requestedUrl = "";
+  let requestedAuthorization = "";
+  const provider = createSearchApiFlightProvider({
+    apiKey: "searchapi_test_secret",
+    fetch: async (input, init) => {
+      requestedUrl = String(input);
+      requestedAuthorization =
+        new Headers(init?.headers).get("Authorization") ?? "";
+      return jsonResponse({
+        booking_options: [
+          {
+            book_with: "Example Airlines",
+            price: 321.45,
+            flight_numbers: ["EX 101", "EX 202"],
+            fare_type: "Economy Light",
+            option_title: "Best value",
+            baggage_prices: ["Carry-on included", "Checked bag €35"],
+            booking_request: {
+              url: "https://example.test/book",
+              post_data: "secret",
+            },
+          },
+        ],
+      });
+    },
+  });
+
+  const options = await provider.getBookingOptions(bookingOptionsInput);
+
+  assert.deepEqual(options, [
+    {
+      sellerName: "Example Airlines",
+      price: { amount: 321.45, currency: "EUR" },
+      flightNumbers: ["EX 101", "EX 202"],
+      fareType: "Economy Light",
+      optionTitle: "Best value",
+      baggagePrices: ["Carry-on included", "Checked bag €35"],
+    },
+  ]);
+  assert.doesNotMatch(
+    JSON.stringify(options),
+    /booking_request|post_data|example\.test\/book/,
+  );
+
+  const request = new URL(requestedUrl);
+  assert.equal(
+    request.origin + request.pathname,
+    "https://www.searchapi.io/api/v1/search",
+  );
+  assert.equal(request.searchParams.get("engine"), "google_flights");
+  assert.equal(request.searchParams.get("flight_type"), "one_way");
+  assert.equal(request.searchParams.get("departure_id"), "BNE");
+  assert.equal(request.searchParams.get("arrival_id"), "BKK");
+  assert.equal(request.searchParams.get("outbound_date"), "2026-08-17");
+  assert.equal(
+    request.searchParams.get("booking_token"),
+    bookingOptionsInput.bookingReference,
+  );
+  assert.equal(request.searchParams.get("adults"), "2");
+  assert.equal(request.searchParams.get("currency"), "EUR");
+  assert.equal(request.searchParams.has("api_key"), false);
+  assert.equal(requestedAuthorization, "Bearer searchapi_test_secret");
+});
+
+test("handles split and empty booking options safely", async () => {
+  const splitProvider = createSearchApiFlightProvider({
+    apiKey: "searchapi_test_secret",
+    fetch: async () =>
+      jsonResponse({
+        booking_options: [
+          {
+            is_split_booking: true,
+            book_with: "Split sellers",
+            price: 499,
+            flight_numbers: ["AA 1", "BB 2"],
+            booking_request: { post_data: "not public" },
+          },
+        ],
+      }),
+  });
+  const emptyProvider = createSearchApiFlightProvider({
+    apiKey: "searchapi_test_secret",
+    fetch: async () => jsonResponse({ booking_options: [] }),
+  });
+
+  assert.deepEqual(await splitProvider.getBookingOptions(bookingOptionsInput), [
+    {
+      sellerName: "Split sellers",
+      price: { amount: 499, currency: "EUR" },
+      flightNumbers: ["AA 1", "BB 2"],
+      isSplitBooking: true,
+    },
+  ]);
+  assert.deepEqual(
+    await emptyProvider.getBookingOptions(bookingOptionsInput),
+    [],
+  );
+});
+
+test("malformed booking responses and errors fail safely without exposing the API key", async () => {
+  const apiKey = "searchapi_private_booking_secret";
+  const malformedProvider = createSearchApiFlightProvider({
+    apiKey,
+    fetch: async () => jsonResponse({ booking_options: {} }),
+  });
+  const errorProvider = createSearchApiFlightProvider({
+    apiKey,
+    fetch: async () =>
+      jsonResponse({ error: `Authorization: Bearer ${apiKey}` }, 500),
+  });
+
+  await assert.rejects(
+    () => malformedProvider.getBookingOptions(bookingOptionsInput),
+    /SearchAPI returned an unexpected response/,
+  );
+
+  let thrown: unknown;
+  try {
+    await errorProvider.getBookingOptions(bookingOptionsInput);
+  } catch (error) {
+    thrown = error;
+  }
+  assert.doesNotMatch(
+    normalizeSearchApiError(thrown).message,
+    new RegExp(apiKey),
+  );
+});
+
 test("uses one exact-date request for every date in a flexible window", async () => {
   const requestedDates: string[] = [];
   const provider = createSearchApiFlightProvider({
     apiKey: "searchapi_test_secret",
     fetch: async (input) => {
-      requestedDates.push(new URL(String(input)).searchParams.get("outbound_date") ?? "");
+      requestedDates.push(
+        new URL(String(input)).searchParams.get("outbound_date") ?? "",
+      );
       return jsonResponse({ best_flights: [] });
     },
   });
@@ -184,7 +346,7 @@ test("keeps the shared maximum flexible-search date protection", async () => {
         ...sampleInput,
         departureWindow: { start: "2026-08-01", end: "2026-08-15" },
       }),
-    /maximum of 14 days/
+    /maximum of 14 days/,
   );
   assert.equal(fetchCalls, 0);
 });
@@ -201,7 +363,10 @@ test("missing API key fails safely before any request", async () => {
   const originalApiKey = process.env.SEARCHAPI_API_KEY;
   delete process.env.SEARCHAPI_API_KEY;
   try {
-    await assert.rejects(() => provider.searchOneWay(sampleInput), /SEARCHAPI_API_KEY is not configured/);
+    await assert.rejects(
+      () => provider.searchOneWay(sampleInput),
+      /SEARCHAPI_API_KEY is not configured/,
+    );
     assert.equal(fetchCalls, 0);
   } finally {
     if (originalApiKey === undefined) {
@@ -216,7 +381,8 @@ test("HTTP errors are normalized without exposing the API key", async () => {
   const apiKey = "searchapi_private_do_not_disclose";
   const provider = createSearchApiFlightProvider({
     apiKey,
-    fetch: async () => jsonResponse({ error: `Authorization: Bearer ${apiKey}` }, 429),
+    fetch: async () =>
+      jsonResponse({ error: `Authorization: Bearer ${apiKey}` }, 429),
   });
 
   let thrown: unknown;
@@ -249,10 +415,10 @@ test("malformed JSON and unexpected response shapes give safe server-side errors
 
   await assert.rejects(
     () => malformedJsonProvider.searchOneWay(sampleInput),
-    /SearchAPI returned invalid JSON/
+    /SearchAPI returned invalid JSON/,
   );
   await assert.rejects(
     () => unexpectedShapeProvider.searchOneWay(sampleInput),
-    /SearchAPI returned an unexpected response/
+    /SearchAPI returned an unexpected response/,
   );
 });

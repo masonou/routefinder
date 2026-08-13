@@ -31,7 +31,7 @@ UPSTASH_REDIS_REST_TOKEN=
 
 ## Search caching
 
-Public searches are cached in Redis for five minutes; empty results use a one-minute TTL. Cache failures fall back to a live planner search. Configure production rate limiting for `/api/search` at the Vercel WAF level.
+Public searches are cached in Redis for five minutes; empty results use a one-minute TTL. Booking-option lookups are cached for five minutes using a hash of the provider booking reference. Cache failures fall back to a live provider request. Configure production rate limiting for both `/api/search` and `/api/booking-options` at the Vercel WAF level; each booking-options cache miss creates a SearchAPI request.
 
 ## Deployment
 

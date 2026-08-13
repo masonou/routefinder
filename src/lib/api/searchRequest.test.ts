@@ -110,6 +110,37 @@ test("a cache miss can invoke a provider without real network traffic", async ()
   assert.equal(providerCalls, 1);
 });
 
+test("normal public search never requests booking options", async () => {
+  let bookingOptionsCalls = 0;
+  const provider: FlightProvider & { getBookingOptions(): Promise<never> } = {
+    name: "test-provider",
+    async searchOneWay() {
+      return [];
+    },
+    async getBookingOptions() {
+      bookingOptionsCalls += 1;
+      throw new Error("Booking options must not be loaded by /api/search.");
+    },
+  };
+
+  const result = await runSearchRequest(searchRequest(searchInput()), {
+    cache: null,
+    provider,
+    async planTrip(request, suppliedProvider) {
+      await suppliedProvider.searchOneWay({
+        origin: request.origin,
+        destination: request.destination,
+        departureWindow: request.departureWindow,
+        adults: request.adults ?? 1,
+      });
+      return [];
+    },
+  });
+
+  assert.equal(result.status, 200);
+  assert.equal(bookingOptionsCalls, 0);
+});
+
 test("request validation and provider failures remain safe for public callers", async () => {
   const invalidResult = await runSearchRequest(
     searchRequest(searchInput({ origin: "NOT_AN_AIRPORT" })),

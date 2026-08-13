@@ -44,7 +44,7 @@ function isSearchCacheValue(value: unknown): value is SearchCacheValue {
 
 export function buildSearchCacheKey(input: SearchCacheKeyInput): string {
   return [
-    "routefinder:search:v2",
+    "routefinder:search:v3",
     input.origin.trim().toUpperCase(),
     input.destination.trim().toUpperCase(),
     input.earliestDeparture,
