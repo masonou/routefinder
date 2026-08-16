@@ -4,6 +4,7 @@ import {
   formatHubStayText,
   formatMoney,
 } from "../lib/utils/formatFlight.ts";
+import { KIWI_AFFILIATE_URL } from "../lib/constants/affiliates.ts";
 import { FlightLeg } from "./FlightLeg";
 
 interface ItineraryCardProps {
@@ -31,6 +32,14 @@ export function ItineraryCard({ itinerary }: ItineraryCardProps) {
           {itinerary.totalStops} {itinerary.totalStops === 1 ? "stop" : "stops"}
         </p>
       </div>
+      <a
+        href={KIWI_AFFILIATE_URL}
+        target="_blank"
+        rel="sponsored noopener noreferrer"
+        className="inline-flex w-full items-center justify-center rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
+      >
+        Check flights on Kiwi
+      </a>
     </article>
   );
 }
