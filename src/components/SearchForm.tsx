@@ -10,6 +10,7 @@ import {
   type SearchFormValues,
   validateSearchFormValues,
 } from "@/lib/utils/searchValidation";
+import { trackSearchSubmitted } from "@/lib/analytics/events";
 import { AirportAutocomplete } from "./AirportAutocomplete";
 
 const INITIAL_VALUES: SearchFormValues = {
@@ -41,7 +42,10 @@ export function SearchForm() {
     event.preventDefault();
     const nextErrors = validateSearchFormValues(values);
     setErrors(nextErrors);
-    if (!hasErrors(nextErrors)) router.push(buildResultsUrl(values));
+    if (!hasErrors(nextErrors)) {
+      trackSearchSubmitted({ origin: values.origin, destination: values.destination });
+      router.push(buildResultsUrl(values));
+    }
   }
 
   return (

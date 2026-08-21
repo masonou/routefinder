@@ -5,6 +5,11 @@ import { useEffect, useState } from "react";
 
 import type { Itinerary } from "../types/itinerary.ts";
 import type { PublicSearchRequest } from "../lib/utils/searchValidation.ts";
+import {
+  trackNoResults,
+  trackResultsFound,
+  trackSearchFailed,
+} from "../lib/analytics/events";
 import { ItineraryCard } from "./ItineraryCard";
 
 interface SearchApiResponse {
@@ -18,6 +23,12 @@ interface SearchApiError {
 
 interface ResultsClientProps {
   request: PublicSearchRequest;
+}
+
+function getSearchErrorType(response: Response): "server" | "validation" | "unknown" {
+  if (response.ok || response.status >= 500) return "server";
+  if (response.status === 400) return "validation";
+  return "unknown";
 }
 
 export function ResultsClient({ request }: ResultsClientProps) {
@@ -43,16 +54,38 @@ export function ResultsClient({ request }: ResultsClientProps) {
         });
 
         const payload = (await response.json()) as SearchApiResponse | SearchApiError;
-        if (!response.ok || !("itineraries" in payload)) {
+        if (!response.ok || !("itineraries" in payload) || !Array.isArray(payload.itineraries)) {
+          if (!abortController.signal.aborted) {
+            trackSearchFailed({
+              origin: request.origin,
+              destination: request.destination,
+              errorType: getSearchErrorType(response),
+            });
+          }
           setErrorMessage(
             "error" in payload && payload.error ? payload.error : "Search failed."
           );
           return;
         }
 
+        if (abortController.signal.aborted) return;
+        if (payload.itineraries.length === 0) {
+          trackNoResults({ origin: request.origin, destination: request.destination });
+        } else {
+          trackResultsFound({
+            origin: request.origin,
+            destination: request.destination,
+            resultCount: payload.itineraries.length,
+          });
+        }
         setItineraries(payload.itineraries);
       } catch (error) {
         if (!abortController.signal.aborted) {
+          trackSearchFailed({
+            origin: request.origin,
+            destination: request.destination,
+            errorType: error instanceof TypeError ? "network" : "unknown",
+          });
           setErrorMessage(error instanceof Error ? error.message : "Search failed.");
         }
       }
@@ -112,8 +145,8 @@ export function ResultsClient({ request }: ResultsClientProps) {
 
   return (
     <div className="space-y-4">
-      {itineraries.map((itinerary) => (
-        <ItineraryCard key={itinerary.id} itinerary={itinerary} />
+      {itineraries.map((itinerary, index) => (
+        <ItineraryCard key={itinerary.id} itinerary={itinerary} rank={index + 1} />
       ))}
       <p className="text-sm text-stone-600">Indicative fares only.</p>
     </div>
