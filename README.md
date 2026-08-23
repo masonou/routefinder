@@ -15,9 +15,9 @@ The development-only discovery pipeline:
 1. finds nonstop destinations with Travel Explore;
 2. ranks geographically sensible hub candidates;
 3. validates onward flights in the 2–6 night Calendar window; and
-4. returns the top validated hubs.
+4. verifies the top three hubs using detailed Google Flights offers.
 
-Detailed itinerary-search integration is not enabled yet.
+Production itinerary-search integration is not enabled yet.
 
 ```bash
 npm run hubs:debug -- LCA DPS 2026-09-01

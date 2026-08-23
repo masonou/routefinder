@@ -11,6 +11,8 @@ export const MAX_HUB_CANDIDATES = 10;
 export const MAX_CALENDAR_CANDIDATES = 8;
 export const MAX_VALIDATED_HUBS = 3;
 export const CALENDAR_VALIDATION_CONCURRENCY = 3;
+export const MAX_VERIFIED_HUBS = 3;
+export const DETAILED_VERIFICATION_CONCURRENCY = 2;
 
 // V1 searches the selected date plus three calendar days to balance useful flexibility
 // with live API cost. This can become a product setting later.
