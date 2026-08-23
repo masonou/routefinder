@@ -422,3 +422,145 @@ test("malformed JSON and unexpected response shapes give safe server-side errors
     /SearchAPI returned an unexpected response/,
   );
 });
+
+test("maps only nonstop Explore destinations and safely skips malformed entries", async () => {
+  let requestedUrl = "";
+  let requestedAuthorization = "";
+  const provider = createSearchApiFlightProvider({
+    apiKey: "searchapi_test_secret",
+    fetch: async (input, init) => {
+      requestedUrl = String(input);
+      requestedAuthorization =
+        new Headers(init?.headers).get("Authorization") ?? "";
+      return jsonResponse({
+        destinations: [
+          {
+            name: "Dubai",
+            country: "United Arab Emirates",
+            coordinates: [25.2048, 55.2708],
+            outbound_date: "2026-09-01",
+            flight: {
+              airport_code: "dxb",
+              stops: 0,
+              price: 241,
+              flight_duration_minutes: 225,
+              airline_code: "ek",
+              airline_name: "Emirates",
+            },
+          },
+          {
+            name: "Malformed",
+            country: "Test",
+            coordinates: [91, 0],
+            outbound_date: "2026-09-01",
+            flight: { airport_code: "BAD", stops: 0 },
+          },
+          {
+            name: "Not direct",
+            country: "Test",
+            coordinates: [40, 20],
+            outbound_date: "2026-09-01",
+            flight: { airport_code: "CON", stops: 1 },
+          },
+          {
+            name: "Dubai duplicate",
+            country: "United Arab Emirates",
+            coordinates: [25.2048, 55.2708],
+            outbound_date: "2026-09-01",
+            flight: { airport_code: "DXB", stops: 0, price: 300 },
+          },
+        ],
+      });
+    },
+  });
+
+  const destinations = await provider.getDirectDestinations({
+    origin: "lca",
+    departureDate: "2026-09-01",
+  });
+
+  assert.deepEqual(destinations, [
+    {
+      airportCode: "DXB",
+      city: "Dubai",
+      country: "United Arab Emirates",
+      latitude: 25.2048,
+      longitude: 55.2708,
+      outboundDate: "2026-09-01",
+      indicativePrice: 241,
+      currency: "EUR",
+      flightDurationMinutes: 225,
+      airlineCode: "EK",
+      airlineName: "Emirates",
+    },
+  ]);
+
+  const request = new URL(requestedUrl);
+  assert.equal(request.searchParams.get("engine"), "google_travel_explore");
+  assert.equal(request.searchParams.get("departure_id"), "LCA");
+  assert.equal(request.searchParams.get("time_period"), "2026-09-01");
+  assert.equal(request.searchParams.get("travel_mode"), "flights_only");
+  assert.equal(request.searchParams.get("stops"), "nonstop");
+  assert.equal(request.searchParams.get("currency"), "EUR");
+  assert.equal(request.searchParams.has("api_key"), false);
+  assert.equal(requestedAuthorization, "Bearer searchapi_test_secret");
+});
+
+test("maps one-way Calendar dates without leaking raw SearchAPI entries", async () => {
+  let requestedUrl = "";
+  const provider = createSearchApiFlightProvider({
+    apiKey: "searchapi_test_secret",
+    fetch: async (input) => {
+      requestedUrl = String(input);
+      return jsonResponse({
+        calendar: [
+          { departure: "2026-09-03", price: 210 },
+          { departure: "2026-09-04", has_no_flights: true },
+          { departure: "2026-09-05" },
+          { departure: "not-a-date", price: 99 },
+          null,
+        ],
+      });
+    },
+  });
+
+  const calendar = await provider.getFlightCalendar({
+    origin: "dxb",
+    destination: "dps",
+    departureWindow: { start: "2026-09-03", end: "2026-09-07" },
+  });
+
+  assert.deepEqual(calendar, [
+    { departureDate: "2026-09-03", price: 210, currency: "EUR", hasFlights: true },
+    { departureDate: "2026-09-04", currency: "EUR", hasFlights: false },
+    { departureDate: "2026-09-05", currency: "EUR", hasFlights: true },
+  ]);
+
+  const request = new URL(requestedUrl);
+  assert.equal(request.searchParams.get("engine"), "google_flights_calendar");
+  assert.equal(request.searchParams.get("flight_type"), "one_way");
+  assert.equal(request.searchParams.get("departure_id"), "DXB");
+  assert.equal(request.searchParams.get("arrival_id"), "DPS");
+  assert.equal(request.searchParams.get("outbound_date"), "2026-09-03");
+  assert.equal(request.searchParams.get("outbound_date_start"), "2026-09-03");
+  assert.equal(request.searchParams.get("outbound_date_end"), "2026-09-07");
+  assert.equal(request.searchParams.get("stops"), "two_stops_or_fewer");
+  assert.equal(request.searchParams.get("currency"), "EUR");
+});
+
+test("Calendar provider errors surface safely", async () => {
+  const provider = createSearchApiFlightProvider({
+    apiKey: "searchapi_test_secret",
+    fetch: async () => jsonResponse({ error: "unavailable" }, 503),
+  });
+
+  await assert.rejects(
+    () =>
+      provider.getFlightCalendar({
+        origin: "DXB",
+        destination: "DPS",
+        departureWindow: { start: "2026-09-03", end: "2026-09-07" },
+      }),
+    /service is unavailable/,
+  );
+});

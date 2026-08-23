@@ -14,6 +14,50 @@ export interface FlightProvider {
   searchOneWay(input: FlightSearchInput): Promise<FlightOffer[]>;
 }
 
+export interface DirectDestinationsInput {
+  origin: string;
+  departureDate: string;
+}
+
+// This deliberately contains only the fields candidate generation needs. Raw
+// Explore responses remain inside the SearchAPI provider.
+export interface DirectDestination {
+  airportCode: string;
+  city: string;
+  country: string;
+  latitude: number;
+  longitude: number;
+  outboundDate: string;
+  indicativePrice?: number;
+  currency?: string;
+  flightDurationMinutes?: number;
+  airlineCode?: string;
+  airlineName?: string;
+}
+
+export interface DirectDestinationsProvider {
+  getDirectDestinations(
+    input: DirectDestinationsInput,
+  ): Promise<DirectDestination[]>;
+}
+
+export interface FlightCalendarInput {
+  origin: string;
+  destination: string;
+  departureWindow: DateWindow;
+}
+
+export interface FlightCalendarDay {
+  departureDate: string;
+  price?: number;
+  currency: string;
+  hasFlights: boolean;
+}
+
+export interface FlightCalendarProvider {
+  getFlightCalendar(input: FlightCalendarInput): Promise<FlightCalendarDay[]>;
+}
+
 export interface BookingOptionsInput {
   bookingReference: string;
   origin: string;

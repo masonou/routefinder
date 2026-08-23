@@ -4,6 +4,14 @@ export const MAX_HUB_STAY_NIGHTS = 6;
 export const MAX_RESULTS = 5;
 export const TARGET_HUB_STAY_NIGHTS = 4;
 
+// Candidate-generation tuning. These are intentionally separate from live
+// itinerary planning until candidate quality has been evaluated.
+export const MAX_HUB_DETOUR_RATIO = 1.6;
+export const MAX_HUB_CANDIDATES = 10;
+export const MAX_CALENDAR_CANDIDATES = 8;
+export const MAX_VALIDATED_HUBS = 3;
+export const CALENDAR_VALIDATION_CONCURRENCY = 3;
+
 // V1 searches the selected date plus three calendar days to balance useful flexibility
 // with live API cost. This can become a product setting later.
 export const DEPARTURE_FLEX_DAYS = 3;

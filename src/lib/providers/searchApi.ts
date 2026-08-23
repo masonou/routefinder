@@ -5,6 +5,12 @@ import type { BookingOption } from "../../types/booking.ts";
 import type {
   BookingOptionsInput,
   BookingOptionsProvider,
+  DirectDestination,
+  DirectDestinationsInput,
+  DirectDestinationsProvider,
+  FlightCalendarDay,
+  FlightCalendarInput,
+  FlightCalendarProvider,
   FlightProvider,
   FlightSearchInput,
 } from "./types.ts";
@@ -79,6 +85,39 @@ function getNonNegativeNumber(
   return typeof value === "number" && Number.isFinite(value) && value >= 0
     ? value
     : undefined;
+}
+
+function getCoordinates(
+  value: unknown,
+): { latitude: number; longitude: number } | null {
+  if (!Array.isArray(value) || value.length < 2) {
+    return null;
+  }
+
+  const [latitude, longitude] = value;
+  if (
+    typeof latitude !== "number" ||
+    typeof longitude !== "number" ||
+    !Number.isFinite(latitude) ||
+    !Number.isFinite(longitude) ||
+    latitude < -90 ||
+    latitude > 90 ||
+    longitude < -180 ||
+    longitude > 180
+  ) {
+    return null;
+  }
+
+  return { latitude, longitude };
+}
+
+function isIsoDate(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return false;
+  }
+
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
 }
 
 function getStringArray(
@@ -394,6 +433,271 @@ function deduplicateOffersById(offers: FlightOffer[]): FlightOffer[] {
   return Array.from(uniqueOffers.values());
 }
 
+function mapSearchApiExploreDestination(
+  value: unknown,
+): DirectDestination | null {
+  if (!isRecord(value) || !isRecord(value.flight) || value.flight.stops !== 0) {
+    return null;
+  }
+
+  const airportCode = getNonEmptyString(
+    value.flight,
+    "airport_code",
+  )?.toUpperCase();
+  const city =
+    getNonEmptyString(value.flight, "city") ?? getNonEmptyString(value, "name");
+  const country = getNonEmptyString(value, "country");
+  const coordinates = getCoordinates(value.coordinates);
+  const outboundDate = getNonEmptyString(value, "outbound_date");
+  if (!airportCode || !city || !country || !coordinates || !outboundDate) {
+    return null;
+  }
+
+  const indicativePrice = getNonNegativeNumber(value.flight, "price");
+  const flightDurationMinutes = getPositiveNumber(
+    value.flight,
+    "flight_duration_minutes",
+  );
+
+  return {
+    airportCode,
+    city,
+    country,
+    ...coordinates,
+    outboundDate,
+    ...(indicativePrice === undefined ? {} : { indicativePrice }),
+    ...(indicativePrice === undefined ? {} : { currency: "EUR" }),
+    ...(flightDurationMinutes === undefined ? {} : { flightDurationMinutes }),
+    ...(getNonEmptyString(value.flight, "airline_code")
+      ? {
+          airlineCode: getNonEmptyString(
+            value.flight,
+            "airline_code",
+          )?.toUpperCase(),
+        }
+      : {}),
+    ...(getNonEmptyString(value.flight, "airline_name")
+      ? { airlineName: getNonEmptyString(value.flight, "airline_name") }
+      : {}),
+  };
+}
+
+function preferDirectDestination(
+  current: DirectDestination,
+  next: DirectDestination,
+): DirectDestination {
+  const currentPrice = current.indicativePrice ?? Number.POSITIVE_INFINITY;
+  const nextPrice = next.indicativePrice ?? Number.POSITIVE_INFINITY;
+  if (nextPrice !== currentPrice) {
+    return nextPrice < currentPrice ? next : current;
+  }
+
+  const currentDuration =
+    current.flightDurationMinutes ?? Number.POSITIVE_INFINITY;
+  const nextDuration = next.flightDurationMinutes ?? Number.POSITIVE_INFINITY;
+  return nextDuration < currentDuration ? next : current;
+}
+
+function deduplicateDirectDestinations(
+  destinations: DirectDestination[],
+): DirectDestination[] {
+  const unique = new Map<string, DirectDestination>();
+  for (const destination of destinations) {
+    const existing = unique.get(destination.airportCode);
+    unique.set(
+      destination.airportCode,
+      existing ? preferDirectDestination(existing, destination) : destination,
+    );
+  }
+  return Array.from(unique.values());
+}
+
+async function fetchDirectDestinations(
+  input: DirectDestinationsInput,
+  options: Required<
+    Pick<
+      SearchApiFlightProviderOptions,
+      "apiKey" | "fetch" | "endpoint" | "timeoutMs"
+    >
+  >,
+): Promise<DirectDestination[]> {
+  const query = new URLSearchParams({
+    engine: "google_travel_explore",
+    departure_id: input.origin.trim().toUpperCase(),
+    time_period: input.departureDate,
+    travel_mode: "flights_only",
+    stops: "nonstop",
+    currency: "EUR",
+  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), options.timeoutMs);
+
+  let response: Response;
+  try {
+    response = await options.fetch(`${options.endpoint}?${query.toString()}`, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${options.apiKey}` },
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (isTimeoutError(error) || controller.signal.aborted) {
+      throw new SearchApiError("SearchAPI request timed out.", {
+        status: 504,
+        retryable: true,
+      });
+    }
+    throw new SearchApiError("SearchAPI network request failed.", {
+      retryable: true,
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  if (!response.ok) {
+    const message =
+      response.status === 401 || response.status === 403
+        ? "SearchAPI authentication failed."
+        : response.status === 429
+          ? "SearchAPI rate limit exceeded."
+          : response.status >= 500
+            ? "SearchAPI service is unavailable."
+            : "SearchAPI request failed.";
+    throw new SearchApiError(message, {
+      status: response.status,
+      retryable: response.status === 429 || response.status >= 500,
+    });
+  }
+
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch {
+    throw new SearchApiError("SearchAPI returned invalid JSON.", {
+      status: 502,
+      retryable: false,
+    });
+  }
+
+  if (!isRecord(body) || !Array.isArray(body.destinations)) {
+    throw new SearchApiError("SearchAPI returned an unexpected response.", {
+      status: 502,
+      retryable: false,
+    });
+  }
+
+  return deduplicateDirectDestinations(
+    body.destinations
+      .map((destination) => mapSearchApiExploreDestination(destination))
+      .filter(
+        (destination): destination is DirectDestination => destination !== null,
+      ),
+  );
+}
+
+function mapSearchApiCalendarDay(value: unknown): FlightCalendarDay | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const departureDate = getNonEmptyString(value, "departure");
+  if (!departureDate || !isIsoDate(departureDate)) {
+    return null;
+  }
+
+  if (value.has_no_flights === true) {
+    return { departureDate, currency: "EUR", hasFlights: false };
+  }
+
+  const price = getNonNegativeNumber(value, "price");
+  return {
+    departureDate,
+    currency: "EUR",
+    hasFlights: true,
+    ...(price === undefined ? {} : { price }),
+  };
+}
+
+async function fetchFlightCalendar(
+  input: FlightCalendarInput,
+  options: Required<
+    Pick<
+      SearchApiFlightProviderOptions,
+      "apiKey" | "fetch" | "endpoint" | "timeoutMs"
+    >
+  >,
+): Promise<FlightCalendarDay[]> {
+  const query = new URLSearchParams({
+    engine: "google_flights_calendar",
+    flight_type: "one_way",
+    departure_id: input.origin.trim().toUpperCase(),
+    arrival_id: input.destination.trim().toUpperCase(),
+    outbound_date: input.departureWindow.start,
+    outbound_date_start: input.departureWindow.start,
+    outbound_date_end: input.departureWindow.end,
+    stops: "two_stops_or_fewer",
+    currency: "EUR",
+  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), options.timeoutMs);
+
+  let response: Response;
+  try {
+    response = await options.fetch(`${options.endpoint}?${query.toString()}`, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${options.apiKey}` },
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (isTimeoutError(error) || controller.signal.aborted) {
+      throw new SearchApiError("SearchAPI request timed out.", {
+        status: 504,
+        retryable: true,
+      });
+    }
+    throw new SearchApiError("SearchAPI network request failed.", {
+      retryable: true,
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  if (!response.ok) {
+    const message =
+      response.status === 401 || response.status === 403
+        ? "SearchAPI authentication failed."
+        : response.status === 429
+          ? "SearchAPI rate limit exceeded."
+          : response.status >= 500
+            ? "SearchAPI service is unavailable."
+            : "SearchAPI request failed.";
+    throw new SearchApiError(message, {
+      status: response.status,
+      retryable: response.status === 429 || response.status >= 500,
+    });
+  }
+
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch {
+    throw new SearchApiError("SearchAPI returned invalid JSON.", {
+      status: 502,
+      retryable: false,
+    });
+  }
+
+  if (!isRecord(body) || !Array.isArray(body.calendar)) {
+    throw new SearchApiError("SearchAPI returned an unexpected response.", {
+      status: 502,
+      retryable: false,
+    });
+  }
+
+  return body.calendar
+    .map((entry) => mapSearchApiCalendarDay(entry))
+    .filter((entry): entry is FlightCalendarDay => entry !== null);
+}
+
 async function searchExactDate(
   input: FlightSearchInput,
   departureDate: string,
@@ -574,7 +878,11 @@ async function fetchBookingOptions(
 }
 
 export class SearchApiFlightProvider
-  implements FlightProvider, BookingOptionsProvider
+  implements
+    FlightProvider,
+    BookingOptionsProvider,
+    DirectDestinationsProvider,
+    FlightCalendarProvider
 {
   readonly name = "searchapi";
   private readonly options: SearchApiFlightProviderOptions;
@@ -614,6 +922,30 @@ export class SearchApiFlightProvider
       timeoutMs: this.options.timeoutMs ?? SEARCH_API_TIMEOUT_MS,
     });
   }
+
+  async getDirectDestinations(
+    input: DirectDestinationsInput,
+  ): Promise<DirectDestination[]> {
+    const apiKey = this.options.apiKey?.trim() || getSearchApiApiKey();
+    return fetchDirectDestinations(input, {
+      apiKey,
+      fetch: this.options.fetch ?? globalThis.fetch,
+      endpoint: this.options.endpoint ?? SEARCH_API_URL,
+      timeoutMs: this.options.timeoutMs ?? SEARCH_API_TIMEOUT_MS,
+    });
+  }
+
+  async getFlightCalendar(
+    input: FlightCalendarInput,
+  ): Promise<FlightCalendarDay[]> {
+    const apiKey = this.options.apiKey?.trim() || getSearchApiApiKey();
+    return fetchFlightCalendar(input, {
+      apiKey,
+      fetch: this.options.fetch ?? globalThis.fetch,
+      endpoint: this.options.endpoint ?? SEARCH_API_URL,
+      timeoutMs: this.options.timeoutMs ?? SEARCH_API_TIMEOUT_MS,
+    });
+  }
 }
 
 export function createSearchApiFlightProvider(
@@ -627,4 +959,10 @@ const defaultSearchApiProvider = createSearchApiFlightProvider();
 export const searchApiFlightProvider: FlightProvider = defaultSearchApiProvider;
 
 export const searchApiBookingOptionsProvider: BookingOptionsProvider =
+  defaultSearchApiProvider;
+
+export const searchApiDirectDestinationsProvider: DirectDestinationsProvider =
+  defaultSearchApiProvider;
+
+export const searchApiFlightCalendarProvider: FlightCalendarProvider =
   defaultSearchApiProvider;

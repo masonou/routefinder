@@ -44,6 +44,12 @@ export function addCalendarDays(date: string, days: number): string {
   return formatIsoDate(parsed);
 }
 
+export function calendarDayDifference(startDate: string, endDate: string): number {
+  const start = parseIsoDate(startDate);
+  const end = parseIsoDate(endDate);
+  return Math.round((end.getTime() - start.getTime()) / MILLISECONDS_PER_DAY);
+}
+
 export function enumerateDateWindow(window: DateWindow): string[] {
   const startDate = parseIsoDate(window.start);
   const endDate = parseIsoDate(window.end);

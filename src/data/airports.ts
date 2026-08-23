@@ -3,12 +3,22 @@ export interface Airport {
   name: string;
   city: string;
   country: string;
-  region: "Australia" | "Europe";
+  region: "Australia" | "Europe" | "Asia";
+  latitude: number;
+  longitude: number;
 }
+
+type AirportCoordinates = Pick<Airport, "latitude" | "longitude">;
+
+// Airport coordinates are kept beside the selectable-airport catalogue so all
+// supported routes use the same source of truth for geographic calculations.
+const AIRPORT_COORDINATES: Record<string, AirportCoordinates> = {
+  AAL: { latitude: 57.094763, longitude: 9.84993 }, ADL: { latitude: -34.947512, longitude: 138.533393 }, AGP: { latitude: 36.6749, longitude: -4.49911 }, ALC: { latitude: 38.2822, longitude: -0.558156 }, AMS: { latitude: 52.308601, longitude: 4.76389 }, ARN: { latitude: 59.64849, longitude: 17.928829 }, ATH: { latitude: 37.936401, longitude: 23.9445 }, AVV: { latitude: -38.040269, longitude: 144.467196 }, AYT: { latitude: 36.898701, longitude: 30.800501 }, BCN: { latitude: 41.2971, longitude: 2.07846 }, BEG: { latitude: 44.818401, longitude: 20.309099 }, BER: { latitude: 52.361738, longitude: 13.502341 }, BGO: { latitude: 60.2934, longitude: 5.21814 }, BHD: { latitude: 54.618099, longitude: -5.8725 }, BIO: { latitude: 43.301102, longitude: -2.91061 }, BKK: { latitude: 13.6811, longitude: 100.747002 }, BLL: { latitude: 55.740335, longitude: 9.157019 }, BLQ: { latitude: 44.5354, longitude: 11.2887 }, BNE: { latitude: -27.384199142456055, longitude: 153.11700439453125 }, BOD: { latitude: 44.82865, longitude: -0.715356 }, BOJ: { latitude: 42.569917, longitude: 27.515173 }, BRS: { latitude: 51.382326, longitude: -2.716453 }, BRU: { latitude: 50.901402, longitude: 4.48444 }, BSL: { latitude: 47.60068, longitude: 7.521117 }, BUD: { latitude: 47.43018, longitude: 19.262393 }, CBR: { latitude: -35.3069, longitude: 149.195007 }, CDG: { latitude: 49.00896, longitude: 2.554117 }, CFU: { latitude: 39.60145, longitude: 19.912179 }, CGN: { latitude: 50.865898, longitude: 7.14274 }, CLJ: { latitude: 46.786042, longitude: 23.685733 }, CNS: { latitude: -16.878921, longitude: 145.74948 }, CPH: { latitude: 55.617900848389, longitude: 12.656000137329 }, CRL: { latitude: 50.461963, longitude: 4.459562 }, CTA: { latitude: 37.466801, longitude: 15.0664 }, DBV: { latitude: 42.562247, longitude: 18.265543 }, DPS: { latitude: -8.748409, longitude: 115.167123 }, DRW: { latitude: -12.41497, longitude: 130.88185 }, DUB: { latitude: 53.428713, longitude: -6.262121 }, DUS: { latitude: 51.289501, longitude: 6.76678 }, EDI: { latitude: 55.950145, longitude: -3.372288 }, EIN: { latitude: 51.4500999451, longitude: 5.37452983856 }, ESB: { latitude: 40.128101, longitude: 32.995098 }, FAO: { latitude: 37.015909, longitude: -7.970939 }, FCO: { latitude: 41.804532, longitude: 12.251998 }, FNC: { latitude: 32.697812, longitude: -16.774613 }, FRA: { latitude: 50.026706, longitude: 8.55835 }, GDN: { latitude: 54.377602, longitude: 18.4662 }, GLA: { latitude: 55.871899, longitude: -4.43306 }, GOT: { latitude: 57.6628, longitude: 12.2798 }, GRZ: { latitude: 46.9911, longitude: 15.4396 }, GVA: { latitude: 46.238098, longitude: 6.10895 }, HAM: { latitude: 53.630402, longitude: 9.98823 }, HBA: { latitude: -42.837032, longitude: 147.513022 }, HEL: { latitude: 60.318363, longitude: 24.963341 }, HER: { latitude: 35.339699, longitude: 25.1803 }, IBZ: { latitude: 38.872898, longitude: 1.37312 }, INN: { latitude: 47.260201, longitude: 11.344 }, IST: { latitude: 41.274874, longitude: 28.732136 }, IZM: { latitude: 37.950699, longitude: 27.329 }, JTR: { latitude: 36.400045, longitude: 25.478638 }, KRK: { latitude: 50.077702, longitude: 19.7848 }, LCA: { latitude: 34.875099, longitude: 33.624901 }, LCY: { latitude: 51.505299, longitude: 0.055278 }, LGW: { latitude: 51.148744, longitude: -0.185739 }, LHR: { latitude: 51.470748, longitude: -0.459909 }, LIN: { latitude: 45.445099, longitude: 9.27674 }, LIS: { latitude: 38.7813, longitude: -9.13592 }, LST: { latitude: -41.544935, longitude: 147.210785 }, LTN: { latitude: 51.874699, longitude: -0.368333 }, LYS: { latitude: 45.725996, longitude: 5.090139 }, MAD: { latitude: 40.493407, longitude: -3.572249 }, MAN: { latitude: 53.349375, longitude: -2.279521 }, MCY: { latitude: -26.593324, longitude: 153.08319 }, MEL: { latitude: -37.670732, longitude: 144.837898 }, MMX: { latitude: 55.535564, longitude: 13.376327 }, MRS: { latitude: 43.438088, longitude: 5.2125 }, MUC: { latitude: 48.353802, longitude: 11.7861 }, MXP: { latitude: 45.6306, longitude: 8.72811 }, NAP: { latitude: 40.886002, longitude: 14.2908 }, NCE: { latitude: 43.658401, longitude: 7.21587 }, NCL: { latitude: 55.037958, longitude: -1.689577 }, NTL: { latitude: -32.796114, longitude: 151.835025 }, OOL: { latitude: -28.165962, longitude: 153.506641 }, OPO: { latitude: 41.2481002808, longitude: -8.68138980865 }, ORK: { latitude: 51.841301, longitude: -8.49111 }, ORY: { latitude: 48.729499, longitude: 2.358963 }, OSL: { latitude: 60.193901, longitude: 11.1004 }, OTP: { latitude: 44.571792, longitude: 26.103285 }, PER: { latitude: -31.94029998779297, longitude: 115.96700286865234 }, PFO: { latitude: 34.717999, longitude: 32.485699 }, PMI: { latitude: 39.551701, longitude: 2.73881 }, PRG: { latitude: 50.100874, longitude: 14.259911 }, PUY: { latitude: 44.893501, longitude: 13.9222 }, RIX: { latitude: 56.920752, longitude: 23.970711 }, RTM: { latitude: 51.956902, longitude: 4.43722 }, RVN: { latitude: 66.563327, longitude: 25.829751 }, SAW: { latitude: 40.898602, longitude: 29.3092 }, SKG: { latitude: 40.51928, longitude: 22.970009 }, SNN: { latitude: 52.702, longitude: -8.92482 }, SOF: { latitude: 42.696357, longitude: 23.417671 }, SPU: { latitude: 43.538898, longitude: 16.298 }, STN: { latitude: 51.884998, longitude: 0.235 }, STR: { latitude: 48.689899, longitude: 9.22196 }, SVQ: { latitude: 37.417999, longitude: -5.89311 }, SYD: { latitude: -33.946098, longitude: 151.177002 }, SZG: { latitude: 47.793301, longitude: 13.0043 }, TLL: { latitude: 59.413246, longitude: 24.83264 }, TLS: { latitude: 43.629101, longitude: 1.36382 }, TRD: { latitude: 63.457802, longitude: 10.924 }, TSV: { latitude: -19.252904, longitude: 146.766512 }, VAR: { latitude: 43.232101, longitude: 27.8251 }, VCE: { latitude: 45.505299, longitude: 12.3519 }, VIE: { latitude: 48.110298, longitude: 16.5697 }, VLC: { latitude: 39.489162, longitude: -0.480961 }, VNO: { latitude: 54.634102, longitude: 25.285801 }, WAW: { latitude: 52.165699, longitude: 20.9671 }, WRO: { latitude: 51.103719, longitude: 16.882096 }, ZAG: { latitude: 45.742901, longitude: 16.0688 }, ZRH: { latitude: 47.458056, longitude: 8.548056 },
+};
 
 // Curated commercial passenger airports for the first version.  Keep this list
 // deliberately readable: countries and then cities are alphabetical.
-export const AIRPORTS: Airport[] = [
+const AIRPORTS_WITHOUT_COORDINATES: Array<Omit<Airport, "latitude" | "longitude">> = [
   // Australia
   { iataCode: "ADL", name: "Adelaide Airport", city: "Adelaide", country: "Australia", region: "Australia" },
   { iataCode: "AVV", name: "Avalon Airport", city: "Avalon", country: "Australia", region: "Australia" },
@@ -25,6 +35,12 @@ export const AIRPORTS: Airport[] = [
   { iataCode: "PER", name: "Perth Airport", city: "Perth", country: "Australia", region: "Australia" },
   { iataCode: "SYD", name: "Sydney Airport", city: "Sydney", country: "Australia", region: "Australia" },
   { iataCode: "TSV", name: "Townsville Airport", city: "Townsville", country: "Australia", region: "Australia" },
+
+  // Indonesia
+  { iataCode: "DPS", name: "I Gusti Ngurah Rai International Airport", city: "Denpasar", country: "Indonesia", region: "Asia" },
+
+  // Thailand
+  { iataCode: "BKK", name: "Suvarnabhumi Airport", city: "Bangkok", country: "Thailand", region: "Asia" },
 
   // Austria
   { iataCode: "GRZ", name: "Graz Airport", city: "Graz", country: "Austria", region: "Europe" },
@@ -157,6 +173,17 @@ export const AIRPORTS: Airport[] = [
   { iataCode: "MAN", name: "Manchester Airport", city: "Manchester", country: "United Kingdom", region: "Europe" },
   { iataCode: "NCL", name: "Newcastle International Airport", city: "Newcastle", country: "United Kingdom", region: "Europe" },
 ];
+
+export const AIRPORTS: Airport[] = AIRPORTS_WITHOUT_COORDINATES.map(
+  (airport) => {
+    const coordinates = AIRPORT_COORDINATES[airport.iataCode];
+    if (!coordinates) {
+      throw new Error(`Missing coordinates for configured airport ${airport.iataCode}.`);
+    }
+
+    return { ...airport, ...coordinates };
+  },
+);
 
 export function findAirportByCode(code: string): Airport | undefined {
   const normalisedCode = code.trim().toUpperCase();

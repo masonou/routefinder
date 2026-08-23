@@ -8,6 +8,24 @@ frontend → POST /api/search → Redis cache → planner → FlightProvider →
 
 The planner and domain types remain provider-neutral. Bangkok (`BKK`) is the current hub, the target stay is four nights, and the selected earliest departure is searched across that date plus three calendar days.
 
+## Dynamic Hub Discovery V2
+
+The development-only discovery pipeline:
+
+1. finds nonstop destinations with Travel Explore;
+2. ranks geographically sensible hub candidates;
+3. validates onward flights in the 2–6 night Calendar window; and
+4. returns the top validated hubs.
+
+Detailed itinerary-search integration is not enabled yet.
+
+```bash
+npm run hubs:debug -- LCA DPS 2026-09-01
+```
+
+The script loads `SEARCHAPI_API_KEY` from `.env.local` when present and prints
+only normalized candidate and Calendar-validation fields.
+
 ## Development
 
 ```bash

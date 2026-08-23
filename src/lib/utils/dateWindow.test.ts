@@ -5,6 +5,7 @@ import { pathToFileURL } from "node:url";
 
 import {
   addCalendarDays,
+  calendarDayDifference,
   enumerateDateWindow,
   MAX_FLEXIBLE_SEARCH_DAYS,
 } from "./dateWindow.ts";
@@ -22,6 +23,12 @@ test("addCalendarDays handles month, year, and leap-day boundaries", () => {
   assert.equal(addCalendarDays("2026-12-31", 1), "2027-01-01");
   assert.equal(addCalendarDays("2028-02-28", 1), "2028-02-29");
   assert.equal(addCalendarDays("2028-02-29", 1), "2028-03-01");
+});
+
+test("calendarDayDifference uses calendar dates for hub stays", () => {
+  assert.equal(calendarDayDifference("2026-09-01", "2026-09-03"), 2);
+  assert.equal(calendarDayDifference("2026-09-01", "2026-09-05"), 4);
+  assert.equal(calendarDayDifference("2026-09-01", "2026-09-07"), 6);
 });
 
 test("addCalendarDays rejects malformed calendar dates", () => {
