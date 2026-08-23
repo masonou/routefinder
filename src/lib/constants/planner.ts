@@ -14,6 +14,17 @@ export const CALENDAR_VALIDATION_CONCURRENCY = 3;
 export const MAX_VERIFIED_HUBS = 3;
 export const DETAILED_VERIFICATION_CONCURRENCY = 2;
 
+// Verified-route quality scoring is intentionally offline-only until dynamic
+// hub discovery replaces the production Bangkok planner path.
+export const VERIFIED_ROUTE_PRICE_WEIGHT = 45;
+export const VERIFIED_ROUTE_DURATION_WEIGHT = 30;
+export const VERIFIED_ROUTE_STOPS_WEIGHT = 10;
+export const VERIFIED_ROUTE_DETOUR_WEIGHT = 10;
+export const VERIFIED_ROUTE_STAY_WEIGHT = 5;
+export const EXTREME_DURATION_RATIO = 1.5;
+export const EXTREME_DURATION_MIN_EXTRA_MINUTES = 8 * 60;
+export const EXTREME_DURATION_REQUIRED_SAVINGS_RATIO = 0.22;
+
 // V1 searches the selected date plus three calendar days to balance useful flexibility
 // with live API cost. This can become a product setting later.
 export const DEPARTURE_FLEX_DAYS = 3;

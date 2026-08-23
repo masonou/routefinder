@@ -6,17 +6,33 @@ import {
 } from "../cache/flightOffersCache.ts";
 import {
   DETAILED_VERIFICATION_CONCURRENCY,
+  EXTREME_DURATION_MIN_EXTRA_MINUTES,
+  EXTREME_DURATION_RATIO,
+  EXTREME_DURATION_REQUIRED_SAVINGS_RATIO,
   MAX_HUB_STAY_NIGHTS,
+  MAX_HUB_DETOUR_RATIO,
   MAX_VERIFIED_HUBS,
   MIN_HUB_STAY_NIGHTS,
+  TARGET_HUB_STAY_NIGHTS,
+  VERIFIED_ROUTE_DETOUR_WEIGHT,
+  VERIFIED_ROUTE_DURATION_WEIGHT,
+  VERIFIED_ROUTE_PRICE_WEIGHT,
+  VERIFIED_ROUTE_STAY_WEIGHT,
+  VERIFIED_ROUTE_STOPS_WEIGHT,
 } from "../constants/planner.ts";
 import type { FlightProvider } from "../providers/types.ts";
 import { calculateHubStayNights, isFlightWithinDepartureWindow, isReasonableFlight } from "./filters.ts";
-import { scoreRouteMetrics } from "./scoreRoute.ts";
 import type { ValidatedHubCandidate } from "./validateHubCandidates.ts";
 import type { FlightOffer, Money } from "../../types/flight.ts";
 
-const GEOGRAPHIC_DETOUR_WEIGHT = 50;
+export interface VerifiedRouteScoreBreakdown {
+  price: number;
+  duration: number;
+  stops: number;
+  detour: number;
+  stay: number;
+  final: number;
+}
 
 export interface VerifiedHubRoute {
   hub: ValidatedHubCandidate;
@@ -29,6 +45,7 @@ export interface VerifiedHubRoute {
   calendarEstimatedTotal?: number;
   calendarDifference?: number;
   calendarDifferencePercent?: number;
+  scoreBreakdown: VerifiedRouteScoreBreakdown;
   score: number;
 }
 
@@ -168,12 +185,6 @@ function createVerifiedRoute(
   const totalFlightDurationMinutes =
     firstLeg.durationMinutes + secondLeg.durationMinutes;
   const totalStops = firstLeg.stops + secondLeg.stops;
-  const baseScore = scoreRouteMetrics({
-    totalPrice,
-    totalFlightDurationMinutes,
-    totalStops,
-    hubStayNights,
-  });
   const calendarEstimatedTotal = hub.estimatedTotalPrice;
   const calendarDifference =
     calendarEstimatedTotal === undefined
@@ -195,9 +206,152 @@ function createVerifiedRoute(
     ...(calendarEstimatedTotal === undefined ? {} : { calendarEstimatedTotal }),
     ...(calendarDifference === undefined ? {} : { calendarDifference }),
     ...(calendarDifferencePercent === undefined ? {} : { calendarDifferencePercent }),
-    // Real detailed price, duration, stops, and stay receive the existing
-    // planner scoring. Geographic detour is a smaller explicit penalty.
-    score: Number((baseScore - hub.detourRatio * GEOGRAPHIC_DETOUR_WEIGHT).toFixed(3)),
+    scoreBreakdown: {
+      price: 0,
+      duration: 0,
+      stops: 0,
+      detour: 0,
+      stay: 0,
+      final: 0,
+    },
+    score: 0,
+  };
+}
+
+function clampScore(value: number): number {
+  return Math.max(0, Math.min(100, value));
+}
+
+function stayQuality(stayNights: number): number {
+  const deviation = Math.abs(stayNights - TARGET_HUB_STAY_NIGHTS);
+  if (deviation === 0) return 100;
+  if (deviation === 1) return 80;
+  return 60;
+}
+
+function stopsQuality(totalStops: number): number {
+  if (totalStops <= 0) return 100;
+  if (totalStops === 1) return 70;
+  return 40;
+}
+
+function routeScoreBreakdown(
+  route: VerifiedHubRoute,
+  allRoutes: VerifiedHubRoute[],
+): VerifiedRouteScoreBreakdown {
+  const cheapestPrice = Math.min(
+    ...allRoutes.map((candidate) => candidate.totalPrice.amount),
+  );
+  const shortestDuration = Math.min(
+    ...allRoutes.map((candidate) => candidate.totalFlightDurationMinutes),
+  );
+  // Price and duration use stable ratios to the best available detailed route;
+  // stops, detour, and stay use fixed absolute scales. Adding or removing an
+  // unrelated candidate cannot turn a small difference into 100 versus zero.
+  const price =
+    route.totalPrice.amount > 0
+      ? clampScore((100 * cheapestPrice) / route.totalPrice.amount)
+      : 0;
+  const duration =
+    route.totalFlightDurationMinutes > 0
+      ? clampScore((100 * shortestDuration) / route.totalFlightDurationMinutes)
+      : 0;
+  const stops = stopsQuality(route.totalStops);
+  const detour = clampScore(
+    ((MAX_HUB_DETOUR_RATIO - route.hub.detourRatio) /
+      (MAX_HUB_DETOUR_RATIO - 1)) *
+      100,
+  );
+  const stay = stayQuality(route.hubStayNights);
+  const final =
+    (price * VERIFIED_ROUTE_PRICE_WEIGHT +
+      duration * VERIFIED_ROUTE_DURATION_WEIGHT +
+      stops * VERIFIED_ROUTE_STOPS_WEIGHT +
+      detour * VERIFIED_ROUTE_DETOUR_WEIGHT +
+      stay * VERIFIED_ROUTE_STAY_WEIGHT) /
+    100;
+
+  return {
+    price: Number(price.toFixed(3)),
+    duration: Number(duration.toFixed(3)),
+    stops: Number(stops.toFixed(3)),
+    detour: Number(detour.toFixed(3)),
+    stay: Number(stay.toFixed(3)),
+    final: Number(final.toFixed(3)),
+  };
+}
+
+function isExtremeDurationOutlier(
+  route: VerifiedHubRoute,
+  fastestRoute: VerifiedHubRoute,
+): boolean {
+  return (
+    route !== fastestRoute &&
+    route.totalFlightDurationMinutes >=
+      fastestRoute.totalFlightDurationMinutes * EXTREME_DURATION_RATIO &&
+    route.totalFlightDurationMinutes >=
+      fastestRoute.totalFlightDurationMinutes + EXTREME_DURATION_MIN_EXTRA_MINUTES
+  );
+}
+
+export interface RankVerifiedRoutesResult {
+  verifiedRoutes: VerifiedHubRoute[];
+  rejected: DetailedVerificationRejection[];
+}
+
+export function rankVerifiedRoutes(
+  routes: VerifiedHubRoute[],
+): RankVerifiedRoutesResult {
+  if (routes.length === 0) {
+    return { verifiedRoutes: [], rejected: [] };
+  }
+
+  const fastestRoute = [...routes].sort(
+    (left, right) =>
+      left.totalFlightDurationMinutes - right.totalFlightDurationMinutes ||
+      left.totalPrice.amount - right.totalPrice.amount ||
+      left.hub.airportCode.localeCompare(right.hub.airportCode),
+  )[0] as VerifiedHubRoute;
+  const rejected: DetailedVerificationRejection[] = [];
+  const survivors = routes.filter((route) => {
+    if (!isExtremeDurationOutlier(route, fastestRoute)) {
+      return true;
+    }
+
+    const priceSavingsRatio =
+      (fastestRoute.totalPrice.amount - route.totalPrice.amount) /
+      fastestRoute.totalPrice.amount;
+    if (priceSavingsRatio >= EXTREME_DURATION_REQUIRED_SAVINGS_RATIO) {
+      return true;
+    }
+
+    const additionalDurationPercent =
+      ((route.totalFlightDurationMinutes - fastestRoute.totalFlightDurationMinutes) /
+        fastestRoute.totalFlightDurationMinutes) *
+      100;
+    rejected.push({
+      airportCode: route.hub.airportCode,
+      reason: `Duration outlier: ${additionalDurationPercent.toFixed(0)}% longer than the fastest route and price savings below the required ${(EXTREME_DURATION_REQUIRED_SAVINGS_RATIO * 100).toFixed(0)}%.`,
+    });
+    return false;
+  });
+
+  return {
+    verifiedRoutes: survivors
+      .map((route) => {
+        const scoreBreakdown = routeScoreBreakdown(route, survivors);
+        return { ...route, scoreBreakdown, score: scoreBreakdown.final };
+      })
+      .sort(
+        (left, right) =>
+          right.score - left.score ||
+          left.totalPrice.amount - right.totalPrice.amount ||
+          left.totalFlightDurationMinutes - right.totalFlightDurationMinutes ||
+          left.totalStops - right.totalStops ||
+          left.hub.airportCode.localeCompare(right.hub.airportCode),
+      )
+      .slice(0, MAX_VERIFIED_HUBS),
+    rejected,
   };
 }
 
@@ -357,18 +511,11 @@ export async function verifyHubCandidates(
     },
   );
 
-  const verifiedRoutes = outcomes
+  const verifiedCandidateRoutes = outcomes
     .filter((outcome): outcome is CandidateSuccess => outcome.type === "success")
-    .map((outcome) => outcome.route)
-    .sort(
-      (left, right) =>
-        right.score - left.score ||
-        left.totalPrice.amount - right.totalPrice.amount ||
-        left.totalFlightDurationMinutes - right.totalFlightDurationMinutes ||
-        left.totalStops - right.totalStops ||
-        left.hub.airportCode.localeCompare(right.hub.airportCode),
-    )
-    .slice(0, MAX_VERIFIED_HUBS);
+    .map((outcome) => outcome.route);
+  const rankedRoutes = rankVerifiedRoutes(verifiedCandidateRoutes);
+  const verifiedRoutes = rankedRoutes.verifiedRoutes;
   const failures = outcomes
     .filter((outcome): outcome is CandidateFailure => outcome.type === "failure")
     .map(({ airportCode, message }) => ({ airportCode, message }));
@@ -381,7 +528,8 @@ export async function verifyHubCandidates(
     verifiedRoutes,
     rejected: outcomes
       .filter((outcome): outcome is CandidateRejection => outcome.type === "rejected")
-      .map(({ airportCode, reason }) => ({ airportCode, reason })),
+      .map(({ airportCode, reason }) => ({ airportCode, reason }))
+      .concat(rankedRoutes.rejected),
     failures,
     detailedLookups: outcomes
       .filter(

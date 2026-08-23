@@ -101,7 +101,7 @@ if (!origin || !destination || !departureDate) {
     searchApiFlightProvider,
   );
 
-  console.log("\nDETAILED VERIFICATION\n");
+  console.log("\nFINAL VERIFIED ROUTES\n");
   if (detailed.verifiedRoutes.length === 0) {
     console.log("No routes survived detailed verification.");
   }
@@ -112,6 +112,10 @@ if (!origin || !destination || !departureDate) {
     printDetailedLeg("Onward leg", route.secondLeg);
     console.log(
       `Detailed total: ${formatMoney(route.totalPrice.amount, route.totalPrice.currency)} · ${formatDuration(route.totalFlightDurationMinutes)} flying · ${route.totalStops} stop${route.totalStops === 1 ? "" : "s"} · score ${route.score}`,
+    );
+    const breakdown = route.scoreBreakdown;
+    console.log(
+      `Score breakdown: price ${breakdown.price}; duration ${breakdown.duration}; stops ${breakdown.stops}; detour ${breakdown.detour}; stay ${breakdown.stay}; final ${breakdown.final}`,
     );
     if (
       route.calendarEstimatedTotal !== undefined &&
@@ -126,8 +130,8 @@ if (!origin || !destination || !departureDate) {
     console.log("");
   });
   if (detailed.rejected.length > 0) {
-    console.log(
-      `Detailed no-offer rejections: ${detailed.rejected.map((entry) => entry.airportCode).join(", ")}`,
+    detailed.rejected.forEach((entry) =>
+      console.log(`${entry.airportCode} rejected: ${entry.reason}`),
     );
   }
   if (detailed.failures.length > 0) {
