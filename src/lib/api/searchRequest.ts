@@ -6,6 +6,10 @@ import {
 } from "../cache/searchCache.ts";
 import { planTrip } from "../planner/planTrip.ts";
 import {
+  isDynamicHubDiscoveryEnabled,
+  searchDynamicRoutes,
+} from "../planner/searchDynamicRoutes.ts";
+import {
   normalizeSearchApiError,
   searchApiFlightProvider,
 } from "../providers/searchApi.ts";
@@ -24,10 +28,15 @@ type PlannerFunction = (
   provider: FlightProvider
 ) => Promise<Itinerary[]>;
 
+type DynamicSearchFunction = (request: TripRequest) => Promise<Itinerary[]>;
+
 export interface SearchRequestDependencies {
   cache?: SearchCache | null;
   provider?: FlightProvider;
   planTrip?: PlannerFunction;
+  searchDynamicRoutes?: DynamicSearchFunction;
+  dynamicHubDiscoveryEnabled?: boolean;
+  environment?: Record<string, string | undefined>;
 }
 
 export type SearchRequestResult =
@@ -54,14 +63,22 @@ export async function runSearchRequest(
     const searchRequest = validateSearchApiBody(body);
     const tripRequest = toTripRequest(searchRequest);
     const cache = dependencies.cache === undefined ? getSearchCache() : dependencies.cache;
+    const dynamicHubDiscoveryEnabled =
+      dependencies.dynamicHubDiscoveryEnabled ??
+      isDynamicHubDiscoveryEnabled(dependencies.environment);
     const searchResult = await runCachedSearch({
-      key: buildSearchCacheKey(searchRequest),
+      key: buildSearchCacheKey(
+        searchRequest,
+        dynamicHubDiscoveryEnabled ? "dynamic" : "legacy",
+      ),
       cache,
       async load() {
-        const itineraries = await (dependencies.planTrip ?? planTrip)(
-          tripRequest,
-          dependencies.provider ?? searchApiFlightProvider
-        );
+        const itineraries = dynamicHubDiscoveryEnabled
+          ? await (dependencies.searchDynamicRoutes ?? searchDynamicRoutes)(tripRequest)
+          : await (dependencies.planTrip ?? planTrip)(
+              tripRequest,
+              dependencies.provider ?? searchApiFlightProvider,
+            );
         return { count: itineraries.length, itineraries };
       },
     });

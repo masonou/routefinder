@@ -141,6 +141,84 @@ test("normal public search never requests booking options", async () => {
   assert.equal(bookingOptionsCalls, 0);
 });
 
+test("the server-side dynamic flag uses dynamic orchestration without invoking legacy BKK planning", async () => {
+  let legacyCalls = 0;
+  let dynamicCalls = 0;
+  const dynamicItinerary = { id: "dynamic" } as Itinerary;
+
+  const dynamic = await runSearchRequest(searchRequest(searchInput()), {
+    cache: null,
+    environment: { DYNAMIC_HUB_DISCOVERY_ENABLED: "true" },
+    async searchDynamicRoutes(request) {
+      dynamicCalls += 1;
+      assert.equal(request.departureWindow.start, "2099-08-17");
+      return [dynamicItinerary];
+    },
+    async planTrip() {
+      legacyCalls += 1;
+      return [];
+    },
+  });
+  assert.equal(dynamic.status, 200);
+  assert.equal(dynamicCalls, 1);
+  assert.equal(legacyCalls, 0);
+  assert.deepEqual(dynamic.body, { count: 1, itineraries: [dynamicItinerary] });
+
+  const legacy = await runSearchRequest(searchRequest(searchInput()), {
+    cache: null,
+    environment: { DYNAMIC_HUB_DISCOVERY_ENABLED: "false" },
+    async searchDynamicRoutes() {
+      dynamicCalls += 1;
+      return [];
+    },
+    async planTrip() {
+      legacyCalls += 1;
+      return [];
+    },
+  });
+  assert.equal(legacy.status, 200);
+  assert.equal(dynamicCalls, 1);
+  assert.equal(legacyCalls, 1);
+});
+
+test("dynamic no-results and provider failures retain public API behaviour without legacy fallback", async () => {
+  let legacyCalls = 0;
+  const noResults = await runSearchRequest(searchRequest(searchInput()), {
+    cache: null,
+    dynamicHubDiscoveryEnabled: true,
+    async searchDynamicRoutes() {
+      return [];
+    },
+    async planTrip() {
+      legacyCalls += 1;
+      return [];
+    },
+  });
+  assert.deepEqual(noResults, {
+    status: 200,
+    body: { count: 0, itineraries: [] },
+    headers: { "X-Routefinder-Cache": "MISS" },
+  });
+  assert.equal(legacyCalls, 0);
+
+  const failure = await runSearchRequest(searchRequest(searchInput()), {
+    cache: null,
+    dynamicHubDiscoveryEnabled: true,
+    async searchDynamicRoutes() {
+      throw new Error("provider failed");
+    },
+    async planTrip() {
+      legacyCalls += 1;
+      return [];
+    },
+  });
+  assert.deepEqual(failure, {
+    status: 500,
+    body: { error: "Flight search is currently unavailable. Please try again." },
+  });
+  assert.equal(legacyCalls, 0);
+});
+
 test("request validation and provider failures remain safe for public callers", async () => {
   const invalidResult = await runSearchRequest(
     searchRequest(searchInput({ origin: "NOT_AN_AIRPORT" })),

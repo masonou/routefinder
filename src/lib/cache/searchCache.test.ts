@@ -35,8 +35,22 @@ test("identical normalized searches use the same versioned cache key", () => {
     adults: 1,
   });
 
-  assert.equal(firstKey, "routefinder:search:v3:BNE:LCA:2026-08-17:1");
+  assert.equal(firstKey, "routefinder:search:v4:BNE:LCA:2026-08-17:1:legacy");
   assert.equal(firstKey, secondKey);
+});
+
+test("dynamic and legacy planners use separate v4 cache entries", () => {
+  const input = {
+    origin: "BNE",
+    destination: "LCA",
+    earliestDeparture: "2026-08-17",
+    adults: 1,
+  };
+  assert.equal(
+    buildSearchCacheKey(input, "dynamic"),
+    "routefinder:search:v4:BNE:LCA:2026-08-17:1:dynamic",
+  );
+  assert.notEqual(buildSearchCacheKey(input, "dynamic"), buildSearchCacheKey(input, "legacy"));
 });
 
 test("cache keys differ for date, route, and adult-count changes", () => {
@@ -73,7 +87,7 @@ test("a cache miss runs the planner result loader and stores successful results 
   };
 
   const result = await runCachedSearch({
-    key: "routefinder:search:v3:BNE:LCA:2026-08-17:1",
+    key: "routefinder:search:v4:BNE:LCA:2026-08-17:1:legacy",
     cache,
     async load() {
       loadCalls += 1;
@@ -91,7 +105,7 @@ test("an unconfigured cache falls back to an uncached planner result", async () 
   let loadCalls = 0;
 
   const result = await runCachedSearch({
-    key: "routefinder:search:v3:BNE:LCA:2026-08-17:1",
+    key: "routefinder:search:v4:BNE:LCA:2026-08-17:1:legacy",
     cache: null,
     async load() {
       loadCalls += 1;
@@ -116,7 +130,7 @@ test("a cache hit returns immediately without running the planner result loader"
   };
 
   const result = await runCachedSearch({
-    key: "routefinder:search:v3:BNE:LCA:2026-08-17:1",
+    key: "routefinder:search:v4:BNE:LCA:2026-08-17:1:legacy",
     cache,
     async load() {
       loadCalls += 1;
@@ -141,7 +155,7 @@ test("empty search results use the short cache TTL", async () => {
   };
 
   await runCachedSearch({
-    key: "routefinder:search:v3:BNE:LCA:2026-08-17:1",
+    key: "routefinder:search:v4:BNE:LCA:2026-08-17:1:legacy",
     cache,
     async load() {
       return emptyResult;
@@ -165,7 +179,7 @@ test("failed planner searches are not cached", async () => {
   await assert.rejects(
     () =>
       runCachedSearch({
-        key: "routefinder:search:v3:BNE:LCA:2026-08-17:1",
+        key: "routefinder:search:v4:BNE:LCA:2026-08-17:1:legacy",
         cache,
         async load() {
           throw new Error("Planner failed.");
@@ -186,7 +200,7 @@ test("Redis read failures fall back to the planner without exposing details", as
   };
 
   const result = await runCachedSearch({
-    key: "routefinder:search:v3:BNE:LCA:2026-08-17:1",
+    key: "routefinder:search:v4:BNE:LCA:2026-08-17:1:legacy",
     cache,
     async load() {
       return resultWithItineraries;
@@ -213,7 +227,7 @@ test("Redis write failures still return the fresh planner result", async () => {
   };
 
   const result = await runCachedSearch({
-    key: "routefinder:search:v3:BNE:LCA:2026-08-17:1",
+    key: "routefinder:search:v4:BNE:LCA:2026-08-17:1:legacy",
     cache,
     async load() {
       return resultWithItineraries;

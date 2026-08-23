@@ -14,8 +14,7 @@ export const CALENDAR_VALIDATION_CONCURRENCY = 3;
 export const MAX_VERIFIED_HUBS = 3;
 export const DETAILED_VERIFICATION_CONCURRENCY = 2;
 
-// Verified-route quality scoring is intentionally offline-only until dynamic
-// hub discovery replaces the production Bangkok planner path.
+// Verified-route quality scoring applies to the dynamic discovery pipeline.
 export const VERIFIED_ROUTE_PRICE_WEIGHT = 45;
 export const VERIFIED_ROUTE_DURATION_WEIGHT = 30;
 export const VERIFIED_ROUTE_STOPS_WEIGHT = 10;

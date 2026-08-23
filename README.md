@@ -1,23 +1,23 @@
 ## Slow Layover
 
-Slow Layover finds one-way itineraries with a 2–6 night stopover in Bangkok. Its request flow is:
+Slow Layover finds one-way itineraries with a 2–6 night stopover. Its request flow is:
 
 ```text
-frontend → POST /api/search → Redis cache → planner → FlightProvider → SearchAPI.io Google Flights
+frontend → POST /api/search → Redis cache → dynamic planner → SearchAPI.io Google Flights
 ```
 
-The planner and domain types remain provider-neutral. Bangkok (`BKK`) is the current hub, the target stay is four nights, and the selected earliest departure is searched across that date plus three calendar days.
+The planner and domain types remain provider-neutral. Dynamic discovery uses Travel Explore for the selected earliest departure date, validates a 2–6 night Calendar window, then verifies detailed flight offers. It intentionally does not run Explore across the full D through D+3 window yet, keeping the cold-search request budget bounded. The old Bangkok (`BKK`) planner remains available only as a temporary server-side rollback mode.
 
 ## Dynamic Hub Discovery V2
 
-The development-only discovery pipeline:
+The dynamic discovery pipeline:
 
 1. finds nonstop destinations with Travel Explore;
 2. ranks geographically sensible hub candidates;
 3. validates onward flights in the 2–6 night Calendar window; and
 4. verifies the top three hubs using detailed Google Flights offers.
 
-Production itinerary-search integration is not enabled yet.
+Set `DYNAMIC_HUB_DISCOVERY_ENABLED=true` to enable it in production search. With the flag set to `false` (the default), the legacy BKK planner retains its existing D through D+3 first-leg window.
 
 ```bash
 npm run hubs:debug -- LCA DPS 2026-09-01
