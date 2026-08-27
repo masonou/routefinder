@@ -1,6 +1,6 @@
 import nextEnv from "@next/env";
 
-import { generateHubCandidates } from "../src/lib/planner/hubCandidates.ts";
+import { discoverFlexibleHubCandidates } from "../src/lib/planner/searchDynamicRoutes.ts";
 import { validateHubCandidates } from "../src/lib/planner/validateHubCandidates.ts";
 import { verifyHubCandidates } from "../src/lib/planner/verifyHubCandidates.ts";
 import {
@@ -8,7 +8,12 @@ import {
   searchApiFlightCalendarProvider,
   searchApiFlightProvider,
 } from "../src/lib/providers/searchApi.ts";
-import { formatDuration, formatFlightDate, formatMoney } from "../src/lib/utils/formatFlight.ts";
+import {
+  formatDateLabel,
+  formatDuration,
+  formatFlightDate,
+  formatMoney,
+} from "../src/lib/utils/formatFlight.ts";
 
 nextEnv.loadEnvConfig(process.cwd());
 
@@ -37,23 +42,55 @@ if (!origin || !destination || !departureDate) {
   );
   process.exitCode = 1;
 } else {
-  const candidates = await generateHubCandidates(
-    { origin, destination, departureDate },
-    searchApiDirectDestinationsProvider,
+  const discovery = await discoverFlexibleHubCandidates(
+    { origin, destination, earliestDeparture: departureDate },
+    { directDestinationsProvider: searchApiDirectDestinationsProvider },
   );
+  const candidates = discovery.calendarCandidates;
+
+  console.log("\nINITIAL DEPARTURE WINDOW\n");
+  discovery.departureDates.forEach((date) => console.log(formatDateLabel(date)));
+
+  console.log("\nEXPLORE RESULTS\n");
+  console.table(
+    discovery.exploreResults.map((result) => ({
+      departureDate: result.departureDate,
+      directDestinations: result.directDestinationCount ?? 0,
+      candidateCount: result.candidateCount ?? 0,
+      hubs: result.hubCodes?.join(", ") ?? "",
+      cacheStatus: result.cacheStatus ?? "ERROR",
+      error: result.error,
+    })),
+  );
+  if (discovery.failures.length > 0) {
+    console.log(
+      `Explore failures: ${discovery.failures.map((failure) => `${failure.departureDate} (${failure.message})`).join(", ")}`,
+    );
+  }
 
   console.log("\nGEOGRAPHIC CANDIDATES\n");
   console.table(
-    candidates.map((candidate, index) => ({
+    discovery.candidates.map((candidate, index) => ({
       rank: index + 1,
       airport: candidate.airportCode,
       city: candidate.city,
       country: candidate.country,
+      firstDepartureDate: candidate.firstLegDepartureDate,
       detourRatio: candidate.detourRatio,
       originToHubKm: candidate.originToHubDistanceKm,
       hubToDestinationKm: candidate.hubToDestinationDistanceKm,
       indicativeFirstLegPrice: candidate.indicativeFirstLegPrice,
       firstLegDurationMinutes: candidate.firstLegDurationMinutes,
+      candidateScore: candidate.candidateScore,
+    })),
+  );
+
+  console.log("\nSELECTED CALENDAR VARIANTS\n");
+  console.table(
+    candidates.map((candidate) => ({
+      airport: candidate.airportCode,
+      firstDepartureDate: candidate.firstLegDepartureDate,
+      detourRatio: candidate.detourRatio,
       candidateScore: candidate.candidateScore,
     })),
   );
@@ -73,6 +110,15 @@ if (!origin || !destination || !departureDate) {
       onwardPrice: candidate.bestOnwardPrice,
       estimatedTotalPrice: candidate.estimatedTotalPrice,
       validationScore: candidate.validationScore,
+    })),
+  );
+  console.log("\nBEST VARIANT PER HUB\n");
+  console.table(
+    validation.topCandidates.map((candidate) => ({
+      airport: candidate.airportCode,
+      firstDepartureDate: candidate.firstLegDepartureDate,
+      bestOnwardDate: candidate.bestOnwardDate,
+      estimatedTotalPrice: candidate.estimatedTotalPrice,
     })),
   );
   if (validation.rejectedNoViableDates.length > 0) {
@@ -146,7 +192,13 @@ if (!origin || !destination || !departureDate) {
   const detailedCacheMisses = detailed.detailedLookups.filter(
     (lookup) => lookup.cacheStatus === "MISS",
   ).length;
+  const exploreCacheHits = discovery.exploreResults.filter(
+    (result) => result.cacheStatus === "HIT",
+  ).length;
+  const exploreCacheMisses = discovery.exploreResults.filter(
+    (result) => result.cacheStatus === "MISS",
+  ).length;
   console.log(
-    `SearchAPI requests: Explore 1; Calendar ${calendarCacheMisses} (${calendarCacheHits} cache hit${calendarCacheHits === 1 ? "" : "s"}); Detailed Flights ${detailedCacheMisses} (${detailedCacheHits} cache hit${detailedCacheHits === 1 ? "" : "s"}); Total ${1 + calendarCacheMisses + detailedCacheMisses}.`,
+    `SearchAPI requests: Explore ${exploreCacheMisses} (${exploreCacheHits} cache hit${exploreCacheHits === 1 ? "" : "s"}); Calendar ${calendarCacheMisses} (${calendarCacheHits} cache hit${calendarCacheHits === 1 ? "" : "s"}); Detailed Flights ${detailedCacheMisses} (${detailedCacheHits} cache hit${detailedCacheHits === 1 ? "" : "s"}); Total ${exploreCacheMisses + calendarCacheMisses + detailedCacheMisses}.`,
   );
 }

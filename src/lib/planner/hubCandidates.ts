@@ -1,5 +1,7 @@
 import { findAirportByCode } from "../../data/airports.ts";
 import {
+  MAX_CALENDAR_CANDIDATES,
+  MAX_DEPARTURE_VARIANTS_PER_HUB,
   MAX_HUB_CANDIDATES,
   MAX_HUB_DETOUR_RATIO,
 } from "../constants/planner.ts";
@@ -110,6 +112,64 @@ function toHubCandidate(
   };
 }
 
+function compareHubCandidates(left: HubCandidate, right: HubCandidate): number {
+  return (
+    right.candidateScore - left.candidateScore ||
+    left.detourRatio - right.detourRatio ||
+    (left.indicativeFirstLegPrice ?? Infinity) -
+      (right.indicativeFirstLegPrice ?? Infinity) ||
+    (left.firstLegDurationMinutes ?? Infinity) -
+      (right.firstLegDurationMinutes ?? Infinity) ||
+    left.firstLegDepartureDate.localeCompare(right.firstLegDepartureDate) ||
+    left.airportCode.localeCompare(right.airportCode)
+  );
+}
+
+function candidateVariantKey(candidate: HubCandidate): string {
+  return `${candidate.airportCode.trim().toUpperCase()}:${candidate.firstLegDepartureDate}`;
+}
+
+// Explore results can repeat an airport/date pair. Retain the candidate with the
+// strongest existing geography-first quality score, while preserving distinct
+// dates as meaningful first-leg alternatives.
+export function deduplicateHubCandidateVariants(
+  candidates: HubCandidate[],
+): HubCandidate[] {
+  const variants = new Map<string, HubCandidate>();
+
+  for (const candidate of candidates) {
+    const key = candidateVariantKey(candidate);
+    const existing = variants.get(key);
+    if (!existing || compareHubCandidates(candidate, existing) < 0) {
+      variants.set(key, candidate);
+    }
+  }
+
+  return [...variants.values()].sort(compareHubCandidates);
+}
+
+// Calendar validation is intentionally bounded: no single hub can consume more
+// than two of the eight available variant slots.
+export function selectCalendarCandidateVariants(
+  candidates: HubCandidate[],
+): HubCandidate[] {
+  const selectedByHub = new Map<string, HubCandidate[]>();
+
+  for (const candidate of deduplicateHubCandidateVariants(candidates)) {
+    const hub = candidate.airportCode.trim().toUpperCase();
+    const variants = selectedByHub.get(hub) ?? [];
+    if (variants.length < MAX_DEPARTURE_VARIANTS_PER_HUB) {
+      variants.push(candidate);
+      selectedByHub.set(hub, variants);
+    }
+  }
+
+  return [...selectedByHub.values()]
+    .flat()
+    .sort(compareHubCandidates)
+    .slice(0, MAX_CALENDAR_CANDIDATES);
+}
+
 export async function generateHubCandidates(
   input: GenerateHubCandidatesInput,
   provider: DirectDestinationsProvider,
@@ -149,12 +209,7 @@ export async function generateHubCandidates(
       ),
     )
     .filter((candidate): candidate is HubCandidate => candidate !== null)
-    .sort(
-      (left, right) =>
-        right.candidateScore - left.candidateScore ||
-        left.detourRatio - right.detourRatio ||
-        left.airportCode.localeCompare(right.airportCode),
-    );
+    .sort(compareHubCandidates);
 
   return candidates.slice(0, MAX_HUB_CANDIDATES);
 }

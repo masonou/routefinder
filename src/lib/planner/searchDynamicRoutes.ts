@@ -4,7 +4,7 @@ import {
   runCachedDirectDestinations,
   type DirectDestinationsCache,
 } from "../cache/directDestinationsCache.ts";
-import { MAX_RESULTS } from "../constants/planner.ts";
+import { DEPARTURE_FLEX_DAYS, MAX_RESULTS } from "../constants/planner.ts";
 import {
   searchApiDirectDestinationsProvider,
   searchApiFlightCalendarProvider,
@@ -16,7 +16,11 @@ import type {
   FlightProvider,
 } from "../providers/types.ts";
 import { selectDiverseItineraries } from "./deduplicateItineraries.ts";
-import { generateHubCandidates } from "./hubCandidates.ts";
+import {
+  generateHubCandidates,
+  selectCalendarCandidateVariants,
+  type HubCandidate,
+} from "./hubCandidates.ts";
 import { validateHubCandidates } from "./validateHubCandidates.ts";
 import {
   verifyHubCandidates,
@@ -24,6 +28,7 @@ import {
 } from "./verifyHubCandidates.ts";
 import type { Itinerary } from "../../types/itinerary.ts";
 import type { TripRequest } from "../../types/trip.ts";
+import { addCalendarDays, enumerateDateWindow } from "../utils/dateWindow.ts";
 
 type WarningFunction = (message: string) => void;
 
@@ -33,6 +38,23 @@ export interface DynamicSearchDependencies {
   flightProvider?: FlightProvider;
   directDestinationsCache?: DirectDestinationsCache | null;
   warn?: WarningFunction;
+}
+
+export interface ExploreDiscoveryResult {
+  departureDate: string;
+  directDestinationCount?: number;
+  candidateCount?: number;
+  hubCodes?: string[];
+  cacheStatus?: "HIT" | "MISS";
+  error?: string;
+}
+
+export interface FlexibleHubDiscoveryResult {
+  departureDates: string[];
+  exploreResults: ExploreDiscoveryResult[];
+  candidates: HubCandidate[];
+  calendarCandidates: HubCandidate[];
+  failures: { departureDate: string; message: string }[];
 }
 
 export function toDynamicItinerary(route: VerifiedHubRoute): Itinerary {
@@ -63,43 +85,127 @@ function throwIfAllStageRequestsFailed(
   }
 }
 
-// Dynamic discovery deliberately performs Explore only for departureWindow.start.
-// The public D through D+3 window remains available to legacy rollback mode; adding
-// four Explore searches would exceed this V1 request budget.
-export async function searchDynamicRoutes(
-  request: TripRequest,
-  dependencies: DynamicSearchDependencies = {},
-): Promise<Itinerary[]> {
+export function getInitialDepartureDates(earliestDeparture: string): string[] {
+  return enumerateDateWindow({
+    start: earliestDeparture,
+    end: addCalendarDays(earliestDeparture, DEPARTURE_FLEX_DAYS),
+  });
+}
+
+export async function discoverFlexibleHubCandidates(
+  input: Pick<TripRequest, "origin" | "destination"> & { earliestDeparture: string },
+  dependencies: Pick<
+    DynamicSearchDependencies,
+    "directDestinationsProvider" | "directDestinationsCache" | "warn"
+  > = {},
+): Promise<FlexibleHubDiscoveryResult> {
   const directDestinationsProvider =
     dependencies.directDestinationsProvider ?? searchApiDirectDestinationsProvider;
-  const flightCalendarProvider =
-    dependencies.flightCalendarProvider ?? searchApiFlightCalendarProvider;
-  const flightProvider = dependencies.flightProvider ?? searchApiFlightProvider;
   const cache =
     dependencies.directDestinationsCache === undefined
       ? getDirectDestinationsCache()
       : dependencies.directDestinationsCache;
   const warn = dependencies.warn ?? console.warn;
-  const departureDate = request.departureWindow.start;
+  const departureDates = getInitialDepartureDates(input.earliestDeparture);
 
-  const candidates = await generateHubCandidates(
+  const exploreResults = await Promise.all(
+    departureDates.map(async (departureDate): Promise<ExploreDiscoveryResult & { candidates?: HubCandidate[] }> => {
+      try {
+        const result = await runCachedDirectDestinations({
+          key: buildDirectDestinationsCacheKey({
+            origin: input.origin,
+            departureDate,
+          }),
+          cache,
+          load: () =>
+            directDestinationsProvider.getDirectDestinations({
+              origin: input.origin,
+              departureDate,
+            }),
+          warn,
+        });
+        const candidates = await generateHubCandidates(
+          {
+            origin: input.origin,
+            destination: input.destination,
+            departureDate,
+          },
+          { getDirectDestinations: async () => result.value },
+        );
+
+        return {
+          departureDate,
+          directDestinationCount: result.value.length,
+          candidateCount: candidates.length,
+          hubCodes: [...new Set(candidates.map((candidate) => candidate.airportCode))],
+          cacheStatus: result.cacheStatus,
+          candidates,
+        };
+      } catch (error) {
+        const message =
+          error instanceof Error && error.message.trim()
+            ? error.message
+            : "Travel Explore provider request failed.";
+        warn(`Travel Explore failed for ${departureDate}: ${message}`);
+        return { departureDate, error: message };
+      }
+    }),
+  );
+  const failures = exploreResults
+    .filter((result) => result.error !== undefined)
+    .map(({ departureDate, error }) => ({
+      departureDate,
+      message: error as string,
+    }));
+
+  if (failures.length === departureDates.length) {
+    throw new Error(
+      `Travel Explore failed for every departure date: ${failures[0]?.message ?? "unknown error"}`,
+    );
+  }
+
+  const candidates = exploreResults.flatMap((result) => result.candidates ?? []);
+  return {
+    departureDates,
+    exploreResults: exploreResults.map((result) => ({
+      departureDate: result.departureDate,
+      ...(result.directDestinationCount === undefined
+        ? {}
+        : { directDestinationCount: result.directDestinationCount }),
+      ...(result.candidateCount === undefined
+        ? {}
+        : { candidateCount: result.candidateCount }),
+      ...(result.hubCodes === undefined ? {} : { hubCodes: result.hubCodes }),
+      ...(result.cacheStatus === undefined ? {} : { cacheStatus: result.cacheStatus }),
+      ...(result.error === undefined ? {} : { error: result.error }),
+    })),
+    candidates,
+    calendarCandidates: selectCalendarCandidateVariants(candidates),
+    failures,
+  };
+}
+
+export async function searchDynamicRoutes(
+  request: TripRequest,
+  dependencies: DynamicSearchDependencies = {},
+): Promise<Itinerary[]> {
+  const flightCalendarProvider =
+    dependencies.flightCalendarProvider ?? searchApiFlightCalendarProvider;
+  const flightProvider = dependencies.flightProvider ?? searchApiFlightProvider;
+  const warn = dependencies.warn ?? console.warn;
+  const discovery = await discoverFlexibleHubCandidates(
     {
       origin: request.origin,
       destination: request.destination,
-      departureDate,
+      earliestDeparture: request.departureWindow.start,
     },
     {
-      async getDirectDestinations(input) {
-        const result = await runCachedDirectDestinations({
-          key: buildDirectDestinationsCacheKey(input),
-          cache,
-          load: () => directDestinationsProvider.getDirectDestinations(input),
-          warn,
-        });
-        return result.value;
-      },
+      directDestinationsProvider: dependencies.directDestinationsProvider,
+      directDestinationsCache: dependencies.directDestinationsCache,
+      warn,
     },
   );
+  const candidates = discovery.calendarCandidates;
   if (candidates.length === 0) return [];
 
   const validation = await validateHubCandidates(

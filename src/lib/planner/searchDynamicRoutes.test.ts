@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { searchDynamicRoutes } from "./searchDynamicRoutes.ts";
+import {
+  discoverFlexibleHubCandidates,
+  getInitialDepartureDates,
+  searchDynamicRoutes,
+} from "./searchDynamicRoutes.ts";
 import type {
   DirectDestination,
   FlightCalendarProvider,
@@ -110,8 +114,10 @@ test("dynamic orchestration maps verified routes into existing itineraries and k
     directDestinationsProvider: {
       async getDirectDestinations(input) {
         exploreCalls += 1;
-        assert.equal(input.departureDate, "2026-09-01");
-        return exploredDestinations;
+        return exploredDestinations.map((destination) => ({
+          ...destination,
+          outboundDate: input.departureDate,
+        }));
       },
     },
     flightCalendarProvider: {
@@ -129,8 +135,8 @@ test("dynamic orchestration maps verified routes into existing itineraries and k
     },
   });
 
-  assert.equal(exploreCalls, 1);
-  assert.equal(calendarCalls, 2);
+  assert.equal(exploreCalls, 4);
+  assert.equal(calendarCalls, 4);
   assert.equal(detailedCalls, 4);
   assert.deepEqual(itineraries.map((itinerary) => itinerary.hub).sort(), ["BKK", "DXB"]);
   for (const itinerary of itineraries) {
@@ -148,10 +154,16 @@ test("dynamic orchestration maps verified routes into existing itineraries and k
 });
 
 test("dynamic orchestration returns no results when Explore finds no viable candidates", async () => {
+  let exploreCalls = 0;
   let calendarCalls = 0;
   const result = await searchDynamicRoutes(request, {
     directDestinationsCache: null,
-    directDestinationsProvider: { async getDirectDestinations() { return []; } },
+    directDestinationsProvider: {
+      async getDirectDestinations() {
+        exploreCalls += 1;
+        return [];
+      },
+    },
     flightCalendarProvider: {
       async getFlightCalendar() {
         calendarCalls += 1;
@@ -161,6 +173,7 @@ test("dynamic orchestration returns no results when Explore finds no viable cand
     flightProvider: flightProvider(),
   });
   assert.deepEqual(result, []);
+  assert.equal(exploreCalls, 4);
   assert.equal(calendarCalls, 0);
 });
 
@@ -178,4 +191,133 @@ test("dynamic provider errors surface to the API caller instead of falling back"
     }),
     /Explore unavailable/,
   );
+});
+
+test("initial departure dates are four inclusive calendar days across a month boundary", () => {
+  assert.deepEqual(getInitialDepartureDates("2026-09-28"), [
+    "2026-09-28",
+    "2026-09-29",
+    "2026-09-30",
+    "2026-10-01",
+  ]);
+});
+
+test("partial Explore failures keep candidates from successful departure dates", async () => {
+  const warnings: string[] = [];
+  const discovery = await discoverFlexibleHubCandidates(
+    { origin: "LCA", destination: "DPS", earliestDeparture: "2026-09-01" },
+    {
+      directDestinationsCache: null,
+      warn: (message) => warnings.push(message),
+      directDestinationsProvider: {
+        async getDirectDestinations(input) {
+          if (input.departureDate === "2026-09-02") {
+            throw new Error("Explore unavailable");
+          }
+          return exploredDestinations.map((destination) => ({
+            ...destination,
+            outboundDate: input.departureDate,
+          }));
+        },
+      },
+    },
+  );
+
+  assert.equal(discovery.failures.length, 1);
+  assert.equal(discovery.failures[0]?.departureDate, "2026-09-02");
+  assert.equal(discovery.calendarCandidates.length, 4);
+  assert.match(warnings[0] ?? "", /Travel Explore failed for 2026-09-02/);
+});
+
+test("overlapping flexible searches reuse cached Explore days independently", async () => {
+  const values = new Map<string, DirectDestination[]>();
+  let providerCalls = 0;
+  const cache = {
+    async get(key: string) {
+      return values.get(key) ?? null;
+    },
+    async set(key: string, value: DirectDestination[]) {
+      values.set(key, value);
+    },
+  };
+  const provider = {
+    async getDirectDestinations(input: { departureDate: string }) {
+      providerCalls += 1;
+      return exploredDestinations.map((destination) => ({
+        ...destination,
+        outboundDate: input.departureDate,
+      }));
+    },
+  };
+
+  await discoverFlexibleHubCandidates(
+    { origin: "LCA", destination: "DPS", earliestDeparture: "2026-09-01" },
+    { directDestinationsCache: cache, directDestinationsProvider: provider },
+  );
+  const overlapping = await discoverFlexibleHubCandidates(
+    { origin: "LCA", destination: "DPS", earliestDeparture: "2026-09-02" },
+    { directDestinationsCache: cache, directDestinationsProvider: provider },
+  );
+
+  assert.equal(providerCalls, 5);
+  assert.deepEqual(
+    overlapping.exploreResults.map((result) => result.cacheStatus),
+    ["HIT", "HIT", "HIT", "MISS"],
+  );
+});
+
+test("the flexible pipeline remains within the 4 Explore, 8 Calendar, and 6 detailed-call budget", async () => {
+  let exploreCalls = 0;
+  let calendarCalls = 0;
+  let detailedCalls = 0;
+  const manyHubs = Array.from({ length: 10 }, (_, index) => ({
+    airportCode: index % 2 === 0 ? "DXB" : "BKK",
+    city: "Test hub",
+    country: "Test country",
+    latitude: 25.2532,
+    longitude: 55.3657,
+    outboundDate: "2026-09-01",
+    indicativePrice: 100 + index,
+    currency: "EUR",
+    flightDurationMinutes: 240,
+  }));
+
+  await searchDynamicRoutes(request, {
+    directDestinationsCache: null,
+    directDestinationsProvider: {
+      async getDirectDestinations(input) {
+        exploreCalls += 1;
+        return manyHubs.map((hub) => ({ ...hub, outboundDate: input.departureDate }));
+      },
+    },
+    flightCalendarProvider: {
+      async getFlightCalendar(input) {
+        calendarCalls += 1;
+        return [{
+          departureDate: input.departureWindow.end,
+          price: 200,
+          currency: "EUR",
+          hasFlights: true,
+        }];
+      },
+    },
+    flightProvider: {
+      name: "test",
+      async searchOneWay(input) {
+        detailedCalls += 1;
+        return [offer(
+          `${input.origin}-${input.destination}-${input.departureWindow.start}`,
+          input.origin,
+          input.destination,
+          input.departureWindow.start,
+          100,
+          240,
+        )];
+      },
+    },
+  });
+
+  assert.ok(exploreCalls <= 4);
+  assert.ok(calendarCalls <= 8);
+  assert.ok(detailedCalls <= 6);
 });

@@ -9,6 +9,7 @@ export const TARGET_HUB_STAY_NIGHTS = 4;
 export const MAX_HUB_DETOUR_RATIO = 1.6;
 export const MAX_HUB_CANDIDATES = 10;
 export const MAX_CALENDAR_CANDIDATES = 8;
+export const MAX_DEPARTURE_VARIANTS_PER_HUB = 2;
 export const MAX_VALIDATED_HUBS = 3;
 export const CALENDAR_VALIDATION_CONCURRENCY = 3;
 export const MAX_VERIFIED_HUBS = 3;

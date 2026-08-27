@@ -1,7 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { generateHubCandidates } from "./hubCandidates.ts";
+import {
+  deduplicateHubCandidateVariants,
+  generateHubCandidates,
+  selectCalendarCandidateVariants,
+} from "./hubCandidates.ts";
+import {
+  MAX_CALENDAR_CANDIDATES,
+  MAX_DEPARTURE_VARIANTS_PER_HUB,
+} from "../constants/planner.ts";
+import type { HubCandidate } from "./hubCandidates.ts";
 import type {
   DirectDestination,
   DirectDestinationsProvider,
@@ -76,4 +85,63 @@ test("ranks lower-detour hubs above extreme detours and removes endpoints", asyn
 
   assert.deepEqual(candidates.map((candidate) => candidate.airportCode), ["DXB", "NQZ"]);
   assert.ok((candidates[0]?.detourRatio ?? Infinity) < (candidates[1]?.detourRatio ?? 0));
+});
+
+function variant(
+  airportCode: string,
+  firstLegDepartureDate: string,
+  overrides: Partial<HubCandidate> = {},
+): HubCandidate {
+  return {
+    airportCode,
+    city: airportCode,
+    country: "Test country",
+    firstLegDepartureDate,
+    latitude: 0,
+    longitude: 0,
+    source: "explore",
+    detourRatio: 1.1,
+    originToHubDistanceKm: 1_000,
+    hubToDestinationDistanceKm: 2_000,
+    indicativeFirstLegPrice: 100,
+    currency: "EUR",
+    firstLegDurationMinutes: 240,
+    candidateScore: 500,
+    ...overrides,
+  };
+}
+
+test("keeps distinct hub/date variants but deduplicates exact duplicates by existing quality", () => {
+  const variants = deduplicateHubCandidateVariants([
+    variant("IST", "2026-09-28", { candidateScore: 400 }),
+    variant("IST", "2026-09-28", { candidateScore: 500 }),
+    variant("IST", "2026-09-29", { candidateScore: 450 }),
+  ]);
+
+  assert.deepEqual(
+    variants.map((candidate) => [candidate.airportCode, candidate.firstLegDepartureDate]),
+    [["IST", "2026-09-28"], ["IST", "2026-09-29"]],
+  );
+  assert.equal(variants[0]?.candidateScore, 500);
+});
+
+test("limits Calendar candidate variants per hub and globally", () => {
+  const candidates = [
+    ...Array.from({ length: 4 }, (_, index) =>
+      variant("IST", `2026-09-0${index + 1}`, { candidateScore: 600 - index }),
+    ),
+    ...Array.from({ length: 4 }, (_, index) =>
+      variant("ATH", `2026-09-0${index + 1}`, { candidateScore: 500 - index }),
+    ),
+    ...Array.from({ length: 8 }, (_, index) =>
+      variant(`H${index}`, "2026-09-01", { candidateScore: 400 - index }),
+    ),
+  ];
+  const selected = selectCalendarCandidateVariants(candidates);
+  const istCount = selected.filter((candidate) => candidate.airportCode === "IST").length;
+  const athCount = selected.filter((candidate) => candidate.airportCode === "ATH").length;
+
+  assert.equal(istCount, MAX_DEPARTURE_VARIANTS_PER_HUB);
+  assert.equal(athCount, MAX_DEPARTURE_VARIANTS_PER_HUB);
+  assert.ok(selected.length <= MAX_CALENDAR_CANDIDATES);
 });

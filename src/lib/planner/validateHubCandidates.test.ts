@@ -158,3 +158,75 @@ test("partial Calendar provider failures remain distinct from no-flight rejectio
   ]);
   assert.match(warnings[0] ?? "", /Calendar validation failed for BAD/);
 });
+
+test("each first-leg variant validates its own two-to-six-night Calendar window", async () => {
+  const windows: Array<{ start: string; end: string }> = [];
+  const result = await validateHubCandidates(
+    {
+      candidates: [
+        candidate("IST", { firstLegDepartureDate: "2026-09-28" }),
+        candidate("IST", { firstLegDepartureDate: "2026-09-29" }),
+      ],
+      destination: "DPS",
+    },
+    {
+      async getFlightCalendar(input) {
+        windows.push(input.departureWindow);
+        return [{
+          departureDate: input.departureWindow.start,
+          price: 100,
+          currency: "EUR",
+          hasFlights: true,
+        }];
+      },
+    },
+    { cache: null },
+  );
+
+  assert.deepEqual(windows, [
+    { start: "2026-09-30", end: "2026-10-04" },
+    { start: "2026-10-01", end: "2026-10-05" },
+  ]);
+  assert.equal(result.validatedCandidates.length, 1);
+});
+
+test("collapses multiple valid date variants to the strongest variant for each hub", async () => {
+  const result = await validateHubCandidates(
+    {
+      candidates: [
+        candidate("IST", { firstLegDepartureDate: "2026-09-01" }),
+        candidate("IST", { firstLegDepartureDate: "2026-09-02" }),
+        candidate("ATH", { firstLegDepartureDate: "2026-09-01" }),
+      ],
+      destination: "DPS",
+    },
+    {
+      async getFlightCalendar(input) {
+        const price =
+          input.origin === "IST" && input.departureWindow.start === "2026-09-03"
+            ? 400
+            : input.origin === "IST"
+              ? 100
+              : 150;
+        return [{
+          departureDate: input.departureWindow.start,
+          price,
+          currency: "EUR",
+          hasFlights: true,
+        }];
+      },
+    },
+    { cache: null },
+  );
+
+  assert.deepEqual(
+    result.validatedCandidates.map((entry) => entry.airportCode).sort(),
+    ["ATH", "IST"],
+  );
+  assert.equal(
+    result.validatedCandidates.find((entry) => entry.airportCode === "IST")
+      ?.firstLegDepartureDate,
+    "2026-09-02",
+  );
+  assert.equal(new Set(result.topCandidates.map((entry) => entry.airportCode)).size, result.topCandidates.length);
+});

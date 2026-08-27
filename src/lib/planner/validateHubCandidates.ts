@@ -220,6 +220,21 @@ function rankValidatedCandidates(
     );
 }
 
+export function collapseValidatedHubVariants(
+  candidates: ValidatedHubCandidate[],
+): ValidatedHubCandidate[] {
+  const bestByHub = new Map<string, ValidatedHubCandidate>();
+
+  for (const candidate of candidates) {
+    const hub = candidate.airportCode.trim().toUpperCase();
+    if (!bestByHub.has(hub)) {
+      bestByHub.set(hub, candidate);
+    }
+  }
+
+  return [...bestByHub.values()];
+}
+
 async function mapWithConcurrency<T, R>(
   values: T[],
   limit: number,
@@ -307,11 +322,11 @@ export async function validateHubCandidates(
     },
   );
 
-  const validatedCandidates = rankValidatedCandidates(
+  const validatedCandidates = collapseValidatedHubVariants(rankValidatedCandidates(
     outcomes
       .filter((outcome): outcome is CandidateValidationSuccess => outcome.type === "success")
       .map((outcome) => outcome.candidate),
-  );
+  ));
 
   return {
     validatedCandidates,
