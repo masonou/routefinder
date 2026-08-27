@@ -50,7 +50,7 @@ test("duration formatting is compact and readable", () => {
   assert.equal(formatDuration(360), "6h");
 });
 
-test("hub-night wording uses singular and plural correctly", () => {
-  assert.equal(formatHubStayText(1), "1 night in Bangkok");
-  assert.equal(formatHubStayText(4), "4 nights in Bangkok");
+test("hub-night wording uses the supplied city with singular and plural correctly", () => {
+  assert.equal(formatHubStayText(1, "Istanbul"), "1 night in Istanbul");
+  assert.equal(formatHubStayText(4, "Bangkok"), "4 nights in Bangkok");
 });

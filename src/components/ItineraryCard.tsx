@@ -1,4 +1,5 @@
 import type { Itinerary } from "../types/itinerary.ts";
+import { getAirportCityName } from "../data/airports";
 import {
   formatDuration,
   formatHubStayText,
@@ -18,7 +19,7 @@ export function ItineraryCard({ itinerary, rank }: ItineraryCardProps) {
     <article className="space-y-5 rounded-xl border border-stone-200 bg-white p-5">
       <FlightLeg leg={itinerary.firstLeg} />
       <p className="text-sm font-medium text-stone-900">
-        {formatHubStayText(itinerary.hubStayNights)}
+        {formatHubStayText(itinerary.hubStayNights, getAirportCityName(itinerary.hub))}
       </p>
       <FlightLeg leg={itinerary.secondLeg} />
       <div className="border-t border-stone-200 pt-4 text-sm text-stone-700">

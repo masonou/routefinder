@@ -111,6 +111,6 @@ export function formatDateRangeCompact(start: string, end: string): string {
   return `${startDay} ${startMonth}–${endDay} ${endMonth}`;
 }
 
-export function formatHubStayText(nights: number): string {
-  return `${nights} ${nights === 1 ? "night" : "nights"} in Bangkok`;
+export function formatHubStayText(nights: number, city: string): string {
+  return `${nights} ${nights === 1 ? "night" : "nights"} in ${city}`;
 }

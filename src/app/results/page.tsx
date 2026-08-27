@@ -64,7 +64,6 @@ export default async function ResultsPage({ searchParams }: ResultsPageProps) {
               ? `${destination.city} (${destination.iataCode})`
               : request.destination}
           </p>
-          <p className="text-sm text-stone-700">via Bangkok</p>
           <p className="text-sm text-stone-700">
             Depart from {formatDateLabel(request.earliestDeparture)}
           </p>
