@@ -24,8 +24,12 @@ test("an exact IATA search ranks first", () => {
 });
 
 test("airport search supports city, airport name, country, and case-insensitive matching", () => {
+  assert.equal(searchAirports("bom")[0]?.iataCode, "BOM");
+  assert.equal(searchAirports("mumbai")[0]?.iataCode, "BOM");
   assert.equal(searchAirports("brisbane")[0]?.iataCode, "BNE");
   assert.equal(searchAirports("heathrow")[0]?.iataCode, "LHR");
+  assert.ok(searchAirports("london").filter((airport) => ["LHR", "LGW", "LCY", "LTN", "STN"].includes(airport.iataCode)).length >= 4);
+  assert.equal(searchAirports("singapore")[0]?.iataCode, "SIN");
   assert.ok(searchAirports("cyPrUs").some((airport) => airport.iataCode === "LCA"));
 });
 
@@ -42,6 +46,17 @@ test("selected airport codes and dates form the public search request", () => {
     ...validValues,
     adults: 1,
   });
+});
+
+test("public validation accepts global codes, normalises lowercase input, and rejects unknown codes", () => {
+  assert.equal(
+    createSearchRequestFromFormValues({ ...validValues, origin: "bom", destination: "sin" }).origin,
+    "BOM",
+  );
+  assert.throws(
+    () => createSearchRequestFromFormValues({ ...validValues, origin: "XYZ" }),
+    SearchValidationError,
+  );
 });
 
 test("invalid free-form airport text cannot be submitted", () => {

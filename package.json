@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "node --experimental-strip-types --test $(find src -name '*.test.ts' -print)",
+    "test": "node --experimental-strip-types --test $(find src scripts -name '*.test.ts' -print)",
+    "airports:generate": "node --experimental-strip-types scripts/generateAirports.ts",
     "hubs:debug": "node --experimental-strip-types scripts/generateHubCandidates.ts"
   },
   "dependencies": {

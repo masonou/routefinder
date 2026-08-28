@@ -36,9 +36,9 @@ test("the card display helper interleaves flights and multiple intentional stopo
     item.kind === "flight" ? `${item.flight.origin} → ${item.flight.destination}` : item.text,
   ), [
     "BCN → SAW",
-    "3 nights in Istanbul",
+    "3 nights in Pendik, Istanbul",
     "SAW → KUL",
-    "2 nights in KUL",
+    "2 nights in Sepang",
     "KUL → DPS",
   ]);
 });

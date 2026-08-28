@@ -32,6 +32,14 @@ only normalized candidate and Calendar-validation fields.
 npm run dev
 ```
 
+## Airport metadata
+
+Autocomplete, public airport validation, display names, and route geography use a
+generated global passenger-airport catalogue from [OurAirports](https://ourairports.com/data/).
+Regenerate it with `npm run airports:generate`; the app never downloads airport
+metadata at runtime. Flight availability and actual routes still come from
+SearchAPI.io / Google Flights.
+
 Open [http://localhost:3000](http://localhost:3000).
 
 Required environment variable:

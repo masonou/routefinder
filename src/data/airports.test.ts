@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { getAirportCityName } from "./airports.ts";
+import { findAirportByCode, getAirportCityName } from "./airports.ts";
 
-test("airport city names use the shared airport catalogue and fall back to IATA", () => {
-  assert.equal(getAirportCityName("SAW"), "Istanbul");
-  assert.equal(getAirportCityName("IST"), "Istanbul");
+test("airport city names use the generated global catalogue and fall back to IATA", () => {
+  assert.equal(getAirportCityName("BOM"), "Mumbai");
+  assert.equal(getAirportCityName("KUL"), findAirportByCode("KUL")?.city);
+  assert.equal(getAirportCityName("SHJ"), "Sharjah");
+  assert.equal(getAirportCityName("SAW"), findAirportByCode("SAW")?.city);
   assert.equal(getAirportCityName("SIN"), "Singapore");
   assert.equal(getAirportCityName("DXB"), "Dubai");
   assert.equal(getAirportCityName("XYZ"), "XYZ");
