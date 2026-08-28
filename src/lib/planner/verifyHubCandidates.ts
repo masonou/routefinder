@@ -24,6 +24,11 @@ import type { FlightProvider } from "../providers/types.ts";
 import { calculateHubStayNights, isFlightWithinDepartureWindow, isReasonableFlight } from "./filters.ts";
 import type { ValidatedHubCandidate } from "./validateHubCandidates.ts";
 import type { FlightOffer, Money } from "../../types/flight.ts";
+import {
+  calculateItineraryFlightDuration,
+  calculateItineraryStops,
+  calculateItineraryTotalPrice,
+} from "../../types/itinerary.ts";
 
 export interface VerifiedRouteScoreBreakdown {
   price: number;
@@ -178,13 +183,10 @@ function createVerifiedRoute(
     };
   }
 
-  const totalPrice = {
-    amount: firstLeg.indicativePrice.amount + secondLeg.indicativePrice.amount,
-    currency: firstLeg.indicativePrice.currency,
-  };
-  const totalFlightDurationMinutes =
-    firstLeg.durationMinutes + secondLeg.durationMinutes;
-  const totalStops = firstLeg.stops + secondLeg.stops;
+  const legs = [{ flight: firstLeg }, { flight: secondLeg }];
+  const totalPrice = calculateItineraryTotalPrice(legs);
+  const totalFlightDurationMinutes = calculateItineraryFlightDuration(legs);
+  const totalStops = calculateItineraryStops(legs);
   const calendarEstimatedTotal = hub.estimatedTotalPrice;
   const calendarDifference =
     calendarEstimatedTotal === undefined

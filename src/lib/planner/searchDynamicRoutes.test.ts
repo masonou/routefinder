@@ -105,7 +105,7 @@ function flightProvider(): FlightProvider {
   };
 }
 
-test("dynamic orchestration maps verified routes into existing itineraries and keeps booking references", async () => {
+test("dynamic orchestration maps verified routes into generic itineraries and keeps booking references", async () => {
   let exploreCalls = 0;
   let calendarCalls = 0;
   let detailedCalls = 0;
@@ -138,17 +138,23 @@ test("dynamic orchestration maps verified routes into existing itineraries and k
   assert.equal(exploreCalls, 4);
   assert.equal(calendarCalls, 4);
   assert.equal(detailedCalls, 4);
-  assert.deepEqual(itineraries.map((itinerary) => itinerary.hub).sort(), ["BKK", "DXB"]);
+  assert.deepEqual(
+    itineraries.map((itinerary) => itinerary.legs[0]?.stopoverAfter?.airportCode).sort(),
+    ["BKK", "DXB"],
+  );
   for (const itinerary of itineraries) {
     assert.equal(itinerary.origin, "LCA");
     assert.equal(itinerary.destination, "DPS");
-    assert.equal(itinerary.hubStayNights, 4);
+    assert.equal(itinerary.legs.length, 2);
+    assert.equal(itinerary.legs[0]?.stopoverAfter?.nights, 4);
+    assert.equal(itinerary.legs[0]?.flight.departureAt.slice(0, 10), "2026-09-01");
+    assert.equal(itinerary.legs[1]?.flight.departureAt.slice(0, 10), "2026-09-05");
     assert.equal(itinerary.totalPrice.amount, 500);
     assert.equal(itinerary.totalFlightDurationMinutes, 720);
     assert.equal(itinerary.totalStops, 1);
-    assert.equal(itinerary.id, `${itinerary.firstLeg.id}__${itinerary.secondLeg.id}`);
-    assert.ok(itinerary.firstLeg.bookingReference);
-    assert.ok(itinerary.secondLeg.bookingReference);
+    assert.match(itinerary.id, /^LCA__DPS__/);
+    assert.ok(itinerary.legs[0]?.flight.bookingReference);
+    assert.ok(itinerary.legs[1]?.flight.bookingReference);
     assert.doesNotMatch(itinerary.id, /opaque-/);
   }
 });

@@ -26,7 +26,7 @@ import {
   verifyHubCandidates,
   type VerifiedHubRoute,
 } from "./verifyHubCandidates.ts";
-import type { Itinerary } from "../../types/itinerary.ts";
+import { createItinerary, type Itinerary } from "../../types/itinerary.ts";
 import type { TripRequest } from "../../types/trip.ts";
 import { addCalendarDays, enumerateDateWindow } from "../utils/dateWindow.ts";
 
@@ -58,21 +58,21 @@ export interface FlexibleHubDiscoveryResult {
 }
 
 export function toDynamicItinerary(route: VerifiedHubRoute): Itinerary {
-  return {
-    // Flight-offer IDs are provider-neutral stable identities; booking references
-    // remain attached to the offers but are intentionally excluded from this ID.
-    id: `${route.firstLeg.id}__${route.secondLeg.id}`,
+  return createItinerary({
     origin: route.firstLeg.origin,
-    hub: route.hub.airportCode,
     destination: route.secondLeg.destination,
-    firstLeg: route.firstLeg,
-    secondLeg: route.secondLeg,
-    hubStayNights: route.hubStayNights,
-    totalPrice: route.totalPrice,
-    totalFlightDurationMinutes: route.totalFlightDurationMinutes,
-    totalStops: route.totalStops,
+    legs: [
+      {
+        flight: route.firstLeg,
+        stopoverAfter: {
+          airportCode: route.hub.airportCode,
+          nights: route.hubStayNights,
+        },
+      },
+      { flight: route.secondLeg },
+    ],
     score: route.score,
-  };
+  });
 }
 
 function throwIfAllStageRequestsFailed(

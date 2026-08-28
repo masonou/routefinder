@@ -12,33 +12,38 @@ function itinerary(overrides: Partial<Itinerary> = {}): Itinerary {
   return {
     id: "first__second",
     origin: "BNE",
-    hub: "BKK",
     destination: "LCA",
-    firstLeg: {
-      id: "first",
-      provider: "test",
-      origin: "BNE",
-      destination: "BKK",
-      departureAt: firstDeparture,
-      arrivalAt: firstArrival,
-      durationMinutes: 540,
-      stops: 0,
-      segments: [{ origin: "BNE", destination: "BKK", departureAt: firstDeparture, arrivalAt: firstArrival, airlineName: "Test" }],
-      indicativePrice: { amount: 400, currency: "AUD" },
-    },
-    secondLeg: {
-      id: "second",
-      provider: "test",
-      origin: "BKK",
-      destination: "LCA",
-      departureAt: secondDeparture,
-      arrivalAt: secondArrival,
-      durationMinutes: 480,
-      stops: 0,
-      segments: [{ origin: "BKK", destination: "LCA", departureAt: secondDeparture, arrivalAt: secondArrival, airlineName: "Test" }],
-      indicativePrice: { amount: 500, currency: "AUD" },
-    },
-    hubStayNights: 4,
+    legs: [
+      {
+        flight: {
+          id: "first",
+          provider: "test",
+          origin: "BNE",
+          destination: "BKK",
+          departureAt: firstDeparture,
+          arrivalAt: firstArrival,
+          durationMinutes: 540,
+          stops: 0,
+          segments: [{ origin: "BNE", destination: "BKK", departureAt: firstDeparture, arrivalAt: firstArrival, airlineName: "Test" }],
+          indicativePrice: { amount: 400, currency: "AUD" },
+        },
+        stopoverAfter: { airportCode: "BKK", nights: 4 },
+      },
+      {
+        flight: {
+          id: "second",
+          provider: "test",
+          origin: "BKK",
+          destination: "LCA",
+          departureAt: secondDeparture,
+          arrivalAt: secondArrival,
+          durationMinutes: 480,
+          stops: 0,
+          segments: [{ origin: "BKK", destination: "LCA", departureAt: secondDeparture, arrivalAt: secondArrival, airlineName: "Test" }],
+          indicativePrice: { amount: 500, currency: "AUD" },
+        },
+      },
+    ],
     totalPrice: { amount: 900, currency: "AUD" },
     totalFlightDurationMinutes: 1020,
     totalStops: 0,
@@ -50,8 +55,16 @@ function itinerary(overrides: Partial<Itinerary> = {}): Itinerary {
 function withTimes(base: Itinerary, firstDeparture: string, secondDeparture: string): Itinerary {
   return {
     ...base,
-    firstLeg: { ...base.firstLeg, departureAt: firstDeparture, segments: [{ ...base.firstLeg.segments[0], departureAt: firstDeparture }] },
-    secondLeg: { ...base.secondLeg, departureAt: secondDeparture, segments: [{ ...base.secondLeg.segments[0], departureAt: secondDeparture }] },
+    legs: [
+      {
+        ...base.legs[0],
+        flight: { ...base.legs[0]!.flight, departureAt: firstDeparture, segments: [{ ...base.legs[0]!.flight.segments[0]!, departureAt: firstDeparture }] },
+      },
+      {
+        ...base.legs[1],
+        flight: { ...base.legs[1]!.flight, departureAt: secondDeparture, segments: [{ ...base.legs[1]!.flight.segments[0]!, departureAt: secondDeparture }] },
+      },
+    ],
   };
 }
 
@@ -61,8 +74,10 @@ test("exact physical journeys with different offer IDs are reduced and the cheap
     id: "offer-b",
     totalPrice: { amount: 800, currency: "AUD" },
     score: 7000,
-    firstLeg: { ...expensive.firstLeg, id: "different-first", provider: "searchapi", indicativePrice: { amount: 300, currency: "AUD" } },
-    secondLeg: { ...expensive.secondLeg, id: "different-second", provider: "searchapi", indicativePrice: { amount: 500, currency: "AUD" } },
+    legs: [
+      { ...expensive.legs[0], flight: { ...expensive.legs[0]!.flight, id: "different-first", provider: "searchapi", indicativePrice: { amount: 300, currency: "AUD" } } },
+      { ...expensive.legs[1], flight: { ...expensive.legs[1]!.flight, id: "different-second", provider: "searchapi", indicativePrice: { amount: 500, currency: "AUD" } } },
+    ],
   });
   assert.deepEqual(selectDiverseItineraries([expensive, cheaper], 5).map((item) => item.id), ["offer-b"]);
 });
@@ -84,14 +99,20 @@ test("different dates, connection paths, and substantially different times remai
   const differentPath = itinerary({
     id: "path",
     score: 8800,
-    firstLeg: {
-      ...base.firstLeg,
-      segments: [
-        { ...base.firstLeg.segments[0], destination: "SIN" },
-        { origin: "SIN", destination: "BKK", departureAt: "2099-08-10T12:00:00+08:00", arrivalAt: base.firstLeg.arrivalAt, airlineName: "Test" },
-      ],
-      stops: 1,
-    },
+    legs: [
+      {
+        ...base.legs[0],
+        flight: {
+          ...base.legs[0]!.flight,
+          segments: [
+            { ...base.legs[0]!.flight.segments[0]!, destination: "SIN" },
+            { origin: "SIN", destination: "BKK", departureAt: "2099-08-10T12:00:00+08:00", arrivalAt: base.legs[0]!.flight.arrivalAt, airlineName: "Test" },
+          ],
+          stops: 1,
+        },
+      },
+      base.legs[1]!,
+    ],
   });
   const differentTime = withTimes(itinerary({ id: "time", score: 8700 }), "2099-08-10T12:30:00+10:00", "2099-08-14T13:30:00+07:00");
   assert.equal(selectDiverseItineraries([base, differentDate, differentPath, differentTime], 5).length, 4);

@@ -77,8 +77,8 @@ test("planner supports a D through D+3 request with no final-arrival deadline", 
   );
 
   assert.equal(itineraries.length, 1);
-  assert.equal(itineraries[0]?.firstLeg.departureAt.slice(0, 10), "2026-08-20");
-  assert.equal(itineraries[0]?.hubStayNights, 6);
+  assert.equal(itineraries[0]?.legs[0]?.flight.departureAt.slice(0, 10), "2026-08-20");
+  assert.equal(itineraries[0]?.legs[0]?.stopoverAfter?.nights, 6);
   assert.deepEqual(searches[1]?.departureWindow, {
     start: "2026-08-22",
     end: "2026-08-26",

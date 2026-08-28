@@ -11,7 +11,7 @@ import {
 import { getCandidateHubs } from "./hubs.ts";
 import { scoreRoute } from "./scoreRoute.ts";
 import type { FlightProvider } from "../providers/types.ts";
-import type { Itinerary } from "../../types/itinerary.ts";
+import { createItinerary, type Itinerary } from "../../types/itinerary.ts";
 import type { TripRequest } from "../../types/trip.ts";
 
 function normaliseAirportCode(code: string): string {
@@ -120,25 +120,21 @@ export async function planTrip(
           continue;
         }
 
-        const totalPriceAmount =
-          firstLeg.indicativePrice.amount + secondLeg.indicativePrice.amount;
-        const itinerary: Itinerary = {
-          id: `${firstLeg.id}__${secondLeg.id}`,
+        const itinerary = createItinerary({
           origin,
-          hub,
           destination,
-          firstLeg,
-          secondLeg,
-          hubStayNights: calculateHubStayNights(firstLeg, secondLeg),
-          totalPrice: {
-            amount: totalPriceAmount,
-            currency: firstLeg.indicativePrice.currency,
-          },
-          totalFlightDurationMinutes:
-            firstLeg.durationMinutes + secondLeg.durationMinutes,
-          totalStops: firstLeg.stops + secondLeg.stops,
+          legs: [
+            {
+              flight: firstLeg,
+              stopoverAfter: {
+                airportCode: hub,
+                nights: calculateHubStayNights(firstLeg, secondLeg),
+              },
+            },
+            { flight: secondLeg },
+          ],
           score: 0,
-        };
+        });
 
         itinerary.score = scoreRoute(itinerary);
         itineraries.push(itinerary);

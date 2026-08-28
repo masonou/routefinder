@@ -23,15 +23,15 @@ function timestampDifferenceMinutes(left: string, right: string): number {
 }
 
 function fingerprint(itinerary: Itinerary): string {
-  return [
-    airportPath(itinerary.firstLeg),
-    itinerary.firstLeg.departureAt,
-    itinerary.firstLeg.arrivalAt,
-    airportPath(itinerary.secondLeg),
-    itinerary.secondLeg.departureAt,
-    itinerary.secondLeg.arrivalAt,
-    itinerary.hubStayNights,
-  ].join("|");
+  return itinerary.legs
+    .flatMap(({ flight, stopoverAfter }) => [
+      airportPath(flight),
+      flight.departureAt,
+      flight.arrivalAt,
+      stopoverAfter?.airportCode ?? "",
+      stopoverAfter?.nights ?? "",
+    ])
+    .join("|");
 }
 
 function compareExactDuplicate(left: Itinerary, right: Itinerary): number {
@@ -50,23 +50,27 @@ export function compareItineraryRank(left: Itinerary, right: Itinerary): number 
   if (left.totalFlightDurationMinutes !== right.totalFlightDurationMinutes) {
     return left.totalFlightDurationMinutes - right.totalFlightDurationMinutes;
   }
-  return left.firstLeg.departureAt.localeCompare(right.firstLeg.departureAt);
+  return left.legs[0]?.flight.departureAt.localeCompare(right.legs[0]?.flight.departureAt ?? "") ?? 0;
 }
 
 function areExtremelySimilar(left: Itinerary, right: Itinerary): boolean {
-  return (
-    calendarDate(left.firstLeg.departureAt) === calendarDate(right.firstLeg.departureAt) &&
-    calendarDate(left.secondLeg.departureAt) === calendarDate(right.secondLeg.departureAt) &&
-    airportPath(left.firstLeg) === airportPath(right.firstLeg) &&
-    airportPath(left.secondLeg) === airportPath(right.secondLeg) &&
-    left.firstLeg.stops === right.firstLeg.stops &&
-    left.secondLeg.stops === right.secondLeg.stops &&
-    timestampDifferenceMinutes(left.firstLeg.departureAt, right.firstLeg.departureAt) <=
-      EXTREMELY_SIMILAR_DEPARTURE_MINUTES &&
-    timestampDifferenceMinutes(left.secondLeg.departureAt, right.secondLeg.departureAt) <=
-      EXTREMELY_SIMILAR_DEPARTURE_MINUTES &&
-    Math.abs(left.hubStayNights - right.hubStayNights) <= 1
-  );
+  if (left.legs.length !== right.legs.length) return false;
+
+  return left.legs.every((leftLeg, index) => {
+    const rightLeg = right.legs[index];
+    if (!rightLeg) return false;
+    const leftStopover = leftLeg.stopoverAfter;
+    const rightStopover = rightLeg.stopoverAfter;
+    return (
+      calendarDate(leftLeg.flight.departureAt) === calendarDate(rightLeg.flight.departureAt) &&
+      airportPath(leftLeg.flight) === airportPath(rightLeg.flight) &&
+      leftLeg.flight.stops === rightLeg.flight.stops &&
+      timestampDifferenceMinutes(leftLeg.flight.departureAt, rightLeg.flight.departureAt) <=
+        EXTREMELY_SIMILAR_DEPARTURE_MINUTES &&
+      leftStopover?.airportCode === rightStopover?.airportCode &&
+      Math.abs((leftStopover?.nights ?? 0) - (rightStopover?.nights ?? 0)) <= 1
+    );
+  });
 }
 
 export function selectDiverseItineraries(
