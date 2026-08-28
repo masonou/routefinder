@@ -10,6 +10,7 @@ import {
 } from "./filters.ts";
 import { getCandidateHubs } from "./hubs.ts";
 import { scoreRoute } from "./scoreRoute.ts";
+import { findAirportByCode } from "../../data/airports.ts";
 import type { FlightProvider } from "../providers/types.ts";
 import { createItinerary, type Itinerary } from "../../types/itinerary.ts";
 import type { TripRequest } from "../../types/trip.ts";
@@ -72,6 +73,7 @@ export async function planTrip(
 
   for (const hubCode of candidateHubs) {
     const hub = normaliseAirportCode(hubCode);
+    const hubAirport = findAirportByCode(hub);
     if (hub === origin || hub === destination) {
       continue;
     }
@@ -128,6 +130,7 @@ export async function planTrip(
               flight: firstLeg,
               stopoverAfter: {
                 airportCode: hub,
+                ...(hubAirport ? { city: hubAirport.city, country: hubAirport.country } : {}),
                 nights: calculateHubStayNights(firstLeg, secondLeg),
               },
             },

@@ -3,6 +3,9 @@ import type { FlightOffer, Money } from "./flight";
 /** A deliberate multi-day stop between separately booked flight offers. */
 export interface ItineraryStopover {
   airportCode: string;
+  // Descriptive metadata for rendering; airportCode remains the operational identity.
+  city?: string;
+  country?: string;
   nights: number;
 }
 

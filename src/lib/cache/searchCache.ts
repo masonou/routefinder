@@ -49,7 +49,7 @@ export function buildSearchCacheKey(
   plannerMode: SearchPlannerMode = "legacy",
 ): string {
   return [
-    "routefinder:search:v7",
+    "routefinder:search:v8",
     input.origin.trim().toUpperCase(),
     input.destination.trim().toUpperCase(),
     input.earliestDeparture,

@@ -71,6 +71,8 @@ export function toDynamicItinerary(route: VerifiedHubRoute): Itinerary {
         flight: route.firstLeg,
         stopoverAfter: {
           airportCode: route.hub.airportCode,
+          city: route.hub.city,
+          country: route.hub.country,
           nights: route.hubStayNights,
         },
       },

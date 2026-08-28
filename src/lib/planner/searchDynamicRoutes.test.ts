@@ -6,6 +6,7 @@ import {
   discoverFlexibleHubCandidates,
   getInitialDepartureDates,
   searchDynamicRoutes,
+  toDynamicItinerary,
 } from "./searchDynamicRoutes.ts";
 import type {
   DirectDestination,
@@ -15,6 +16,8 @@ import type {
 import type { FlightOffer } from "../../types/flight.ts";
 import type { TripRequest } from "../../types/trip.ts";
 import { createItinerary } from "../../types/itinerary.ts";
+import type { ValidatedHubCandidate } from "./validateHubCandidates.ts";
+import type { VerifiedHubRoute } from "./verifyHubCandidates.ts";
 
 const request: TripRequest = {
   origin: "LCA",
@@ -107,6 +110,55 @@ function flightProvider(): FlightProvider {
   };
 }
 
+function verifiedRouteWithLocation(
+  airportCode: string,
+  city: string,
+  country: string,
+): VerifiedHubRoute {
+  const hub = {
+    airportCode,
+    city,
+    country,
+    firstLegDepartureDate: "2026-09-01",
+    latitude: 0,
+    longitude: 0,
+    source: "explore",
+    detourRatio: 1,
+    originToHubDistanceKm: 1,
+    hubToDestinationDistanceKm: 1,
+    candidateScore: 1,
+    onwardOptions: [],
+    bestOnwardDate: "2026-09-05",
+    bestOnwardPrice: 300,
+    bestStayNights: 4,
+    validationScore: 1,
+  } satisfies ValidatedHubCandidate;
+  return {
+    hub,
+    firstLeg: offer(`first-${airportCode}`, "LCA", airportCode, "2026-09-01", 200, 240),
+    secondLeg: offer(`second-${airportCode}`, airportCode, "DPS", "2026-09-05", 300, 480, 1),
+    hubStayNights: 4,
+    totalPrice: { amount: 500, currency: "EUR" },
+    totalFlightDurationMinutes: 720,
+    totalStops: 1,
+    scoreBreakdown: { price: 0, duration: 0, stops: 0, detour: 0, stay: 0, final: 0 },
+    score: 0,
+  };
+}
+
+test("dynamic itinerary mapping preserves traveler-facing Explore metadata", () => {
+  for (const [airportCode, city, country] of [
+    ["ATH", "Athens", "Greece"],
+    ["BOM", "Mumbai", "India"],
+  ]) {
+    assert.deepEqual(
+      toDynamicItinerary(verifiedRouteWithLocation(airportCode, city, country))
+        .legs[0]?.stopoverAfter,
+      { airportCode, city, country, nights: 4 },
+    );
+  }
+});
+
 test("dynamic orchestration maps verified routes into generic itineraries and keeps booking references", async () => {
   let exploreCalls = 0;
   let calendarCalls = 0;
@@ -148,6 +200,24 @@ test("dynamic orchestration maps verified routes into generic itineraries and ke
     itineraries.slice(0, 2).map((itinerary) => itinerary.legs[0]?.stopoverAfter?.airportCode).sort(),
     ["BKK", "DXB"],
   );
+  const stopoversByCode = new Map(
+    itineraries.slice(0, 2).map((itinerary) => {
+      const stopover = itinerary.legs[0]?.stopoverAfter;
+      return [stopover?.airportCode, stopover] as const;
+    }),
+  );
+  assert.deepEqual(stopoversByCode.get("DXB"), {
+    airportCode: "DXB",
+    city: "Dubai",
+    country: "United Arab Emirates",
+    nights: 4,
+  });
+  assert.deepEqual(stopoversByCode.get("BKK"), {
+    airportCode: "BKK",
+    city: "Bangkok",
+    country: "Thailand",
+    nights: 4,
+  });
   for (const itinerary of itineraries.slice(0, 2)) {
     assert.equal(itinerary.origin, "LCA");
     assert.equal(itinerary.destination, "DPS");

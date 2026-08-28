@@ -59,14 +59,27 @@ test("one intentional stopover is stored after its arriving itinerary leg", () =
     origin: "BCN",
     destination: "DPS",
     legs: [
-      { flight: flight("bcn-ist", "BCN", "IST", 150, 210, 0), stopoverAfter: { airportCode: "IST", nights: 3 } },
+      {
+        flight: flight("bcn-ist", "BCN", "IST", 150, 210, 0),
+        stopoverAfter: {
+          airportCode: "IST",
+          city: "Istanbul",
+          country: "Türkiye",
+          nights: 3,
+        },
+      },
       { flight: flight("ist-dps", "IST", "DPS", 350, 660, 1) },
     ],
     score: 12,
   });
 
   assert.equal(itinerary.legs.length, 2);
-  assert.deepEqual(getItineraryStopovers(itinerary), [{ airportCode: "IST", nights: 3 }]);
+  assert.deepEqual(getItineraryStopovers(itinerary), [{
+    airportCode: "IST",
+    city: "Istanbul",
+    country: "Türkiye",
+    nights: 3,
+  }]);
   assert.deepEqual(itinerary.totalPrice, { amount: 500, currency: "EUR" });
   assert.equal(itinerary.totalFlightDurationMinutes, 870);
   assert.equal(itinerary.totalStops, 1);
