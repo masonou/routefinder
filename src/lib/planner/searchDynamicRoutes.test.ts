@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  appendDirectBaseline,
   discoverFlexibleHubCandidates,
   getInitialDepartureDates,
   searchDynamicRoutes,
@@ -13,6 +14,7 @@ import type {
 } from "../providers/types.ts";
 import type { FlightOffer } from "../../types/flight.ts";
 import type { TripRequest } from "../../types/trip.ts";
+import { createItinerary } from "../../types/itinerary.ts";
 
 const request: TripRequest = {
   origin: "LCA",
@@ -123,6 +125,9 @@ test("dynamic orchestration maps verified routes into generic itineraries and ke
     flightCalendarProvider: {
       async getFlightCalendar(input) {
         calendarCalls += 1;
+        if (input.origin === "LCA" && input.destination === "DPS") {
+          return [{ departureDate: "2026-09-01", price: 250, currency: "EUR", hasFlights: true }];
+        }
         return calendarProvider().getFlightCalendar(input);
       },
     },
@@ -136,13 +141,14 @@ test("dynamic orchestration maps verified routes into generic itineraries and ke
   });
 
   assert.equal(exploreCalls, 4);
-  assert.equal(calendarCalls, 4);
-  assert.equal(detailedCalls, 4);
+  assert.equal(calendarCalls, 5);
+  assert.equal(detailedCalls, 5);
+  assert.equal(itineraries.length, 3);
   assert.deepEqual(
-    itineraries.map((itinerary) => itinerary.legs[0]?.stopoverAfter?.airportCode).sort(),
+    itineraries.slice(0, 2).map((itinerary) => itinerary.legs[0]?.stopoverAfter?.airportCode).sort(),
     ["BKK", "DXB"],
   );
-  for (const itinerary of itineraries) {
+  for (const itinerary of itineraries.slice(0, 2)) {
     assert.equal(itinerary.origin, "LCA");
     assert.equal(itinerary.destination, "DPS");
     assert.equal(itinerary.legs.length, 2);
@@ -157,6 +163,11 @@ test("dynamic orchestration maps verified routes into generic itineraries and ke
     assert.ok(itinerary.legs[1]?.flight.bookingReference);
     assert.doesNotMatch(itinerary.id, /opaque-/);
   }
+  const direct = itineraries.at(-1);
+  assert.equal(direct?.legs.length, 1);
+  assert.equal(direct?.legs[0]?.stopoverAfter, undefined);
+  assert.equal(direct?.legs[0]?.flight.bookingReference, "opaque-first-DPS");
+  assert.equal(direct?.totalStops, 0);
 });
 
 test("dynamic orchestration returns no results when Explore finds no viable candidates", async () => {
@@ -180,7 +191,80 @@ test("dynamic orchestration returns no results when Explore finds no viable cand
   });
   assert.deepEqual(result, []);
   assert.equal(exploreCalls, 4);
-  assert.equal(calendarCalls, 0);
+  assert.equal(calendarCalls, 1);
+});
+
+test("a valid direct baseline is returned when adventure discovery finds no candidates", async () => {
+  const result = await searchDynamicRoutes(request, {
+    directDestinationsCache: null,
+    flightCalendarCache: null,
+    flightOffersCache: null,
+    directDestinationsProvider: { async getDirectDestinations() { return []; } },
+    flightCalendarProvider: {
+      async getFlightCalendar() {
+        return [{ departureDate: "2026-09-01", price: 400, currency: "EUR", hasFlights: true }];
+      },
+    },
+    flightProvider: {
+      name: "test",
+      async searchOneWay() { return [offer("direct", "LCA", "DPS", "2026-09-01", 400, 720)]; },
+    },
+  });
+
+  assert.equal(result.length, 1);
+  assert.equal(result[0]?.legs.length, 1);
+  assert.equal(result[0]?.legs[0]?.flight.id, "direct");
+});
+
+test("a direct discovery failure leaves successful adventure results intact", async () => {
+  const warnings: string[] = [];
+  const result = await searchDynamicRoutes(request, {
+    directDestinationsCache: null,
+    flightCalendarCache: null,
+    flightOffersCache: null,
+    directDestinationsProvider: {
+      async getDirectDestinations(input) {
+        return exploredDestinations.map((destination) => ({ ...destination, outboundDate: input.departureDate }));
+      },
+    },
+    flightCalendarProvider: {
+      async getFlightCalendar(input) {
+        if (input.origin === "LCA" && input.destination === "DPS") {
+          throw new Error("Direct Calendar unavailable");
+        }
+        return calendarProvider().getFlightCalendar(input);
+      },
+    },
+    flightProvider: flightProvider(),
+    warn: (message) => warnings.push(message),
+  });
+
+  assert.equal(result.length, 2);
+  assert.ok(result.every((itinerary) => itinerary.legs.length === 2));
+  assert.match(warnings.find((message) => message.includes("Direct route discovery failed")) ?? "", /Direct Calendar unavailable/);
+});
+
+test("adventures remain unchanged when no direct Calendar date is available", async () => {
+  const result = await searchDynamicRoutes(request, {
+    directDestinationsCache: null,
+    flightCalendarCache: null,
+    flightOffersCache: null,
+    directDestinationsProvider: {
+      async getDirectDestinations(input) {
+        return exploredDestinations.map((destination) => ({ ...destination, outboundDate: input.departureDate }));
+      },
+    },
+    flightCalendarProvider: {
+      async getFlightCalendar(input) {
+        if (input.origin === "LCA" && input.destination === "DPS") return [];
+        return calendarProvider().getFlightCalendar(input);
+      },
+    },
+    flightProvider: flightProvider(),
+  });
+
+  assert.equal(result.length, 2);
+  assert.ok(result.every((itinerary) => itinerary.legs.length === 2));
 });
 
 test("dynamic provider errors surface to the API caller instead of falling back", async () => {
@@ -272,7 +356,7 @@ test("overlapping flexible searches reuse cached Explore days independently", as
   );
 });
 
-test("the flexible pipeline remains within the 4 Explore, 8 Calendar, and 6 detailed-call budget", async () => {
+test("the flexible pipeline remains within the 4 Explore, 9 Calendar, and 7 detailed-call budget", async () => {
   let exploreCalls = 0;
   let calendarCalls = 0;
   let detailedCalls = 0;
@@ -324,6 +408,23 @@ test("the flexible pipeline remains within the 4 Explore, 8 Calendar, and 6 deta
   });
 
   assert.ok(exploreCalls <= 4);
-  assert.ok(calendarCalls <= 8);
-  assert.ok(detailedCalls <= 6);
+  assert.ok(calendarCalls <= 9);
+  assert.ok(detailedCalls <= 7);
+  assert.ok(exploreCalls + calendarCalls + detailedCalls <= 20);
+});
+
+test("a direct baseline is appended after three adventures without replacing one", () => {
+  const itinerary = (id: string) => createItinerary({
+    origin: "ATH",
+    destination: "SIN",
+    legs: [{ flight: offer(id, "ATH", "SIN", "2026-09-21", 300, 600) }],
+    score: 0,
+  });
+  const adventures = [itinerary("adventure-1"), itinerary("adventure-2"), itinerary("adventure-3")];
+  const direct = itinerary("direct");
+  assert.deepEqual(
+    appendDirectBaseline(adventures, direct).map((item) => item.id),
+    [...adventures, direct].map((item) => item.id),
+  );
+  assert.deepEqual(appendDirectBaseline(adventures, undefined), adventures);
 });

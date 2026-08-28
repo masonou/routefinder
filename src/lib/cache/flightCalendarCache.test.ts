@@ -23,6 +23,16 @@ test("Calendar cache key scopes route, date window, flight type, stops, and curr
     key,
     "slowlayover:calendar:v1:DXB:DPS:2026-09-03:2026-09-07:one_way:two_stops_or_fewer:EUR",
   );
+  assert.notEqual(
+    key,
+    buildFlightCalendarCacheKey({
+      origin: "dxb",
+      destination: "dps",
+      startDate: "2026-09-03",
+      endDate: "2026-09-07",
+      stopPolicy: "nonstop",
+    }),
+  );
 });
 
 test("Calendar cache hits avoid the provider and misses cache the normalized response", async () => {

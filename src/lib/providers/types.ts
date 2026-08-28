@@ -45,6 +45,8 @@ export interface FlightCalendarInput {
   origin: string;
   destination: string;
   departureWindow: DateWindow;
+  // Hub validation permits airline connections; direct baseline discovery does not.
+  stopPolicy?: "nonstop" | "two_stops_or_fewer";
 }
 
 export interface FlightCalendarDay {

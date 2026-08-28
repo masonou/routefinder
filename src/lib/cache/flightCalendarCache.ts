@@ -17,6 +17,7 @@ export interface FlightCalendarCacheKeyInput {
   destination: string;
   startDate: string;
   endDate: string;
+  stopPolicy?: "nonstop" | "two_stops_or_fewer";
 }
 
 type WarningFunction = (message: string) => void;
@@ -46,7 +47,7 @@ export function buildFlightCalendarCacheKey(
     input.startDate,
     input.endDate,
     "one_way",
-    "two_stops_or_fewer",
+    input.stopPolicy ?? "two_stops_or_fewer",
     "EUR",
   ].join(":");
 }

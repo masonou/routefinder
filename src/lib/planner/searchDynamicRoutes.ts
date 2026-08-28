@@ -4,6 +4,8 @@ import {
   runCachedDirectDestinations,
   type DirectDestinationsCache,
 } from "../cache/directDestinationsCache.ts";
+import type { FlightCalendarCache } from "../cache/flightCalendarCache.ts";
+import type { FlightOffersCache } from "../cache/flightOffersCache.ts";
 import { DEPARTURE_FLEX_DAYS, MAX_RESULTS } from "../constants/planner.ts";
 import {
   searchApiDirectDestinationsProvider,
@@ -29,6 +31,7 @@ import {
 import { createItinerary, type Itinerary } from "../../types/itinerary.ts";
 import type { TripRequest } from "../../types/trip.ts";
 import { addCalendarDays, enumerateDateWindow } from "../utils/dateWindow.ts";
+import { discoverDirectItinerary } from "./discoverDirectRoute.ts";
 
 type WarningFunction = (message: string) => void;
 
@@ -37,6 +40,8 @@ export interface DynamicSearchDependencies {
   flightCalendarProvider?: FlightCalendarProvider;
   flightProvider?: FlightProvider;
   directDestinationsCache?: DirectDestinationsCache | null;
+  flightCalendarCache?: FlightCalendarCache | null;
+  flightOffersCache?: FlightOffersCache | null;
   warn?: WarningFunction;
 }
 
@@ -73,6 +78,16 @@ export function toDynamicItinerary(route: VerifiedHubRoute): Itinerary {
     ],
     score: route.score,
   });
+}
+
+export function appendDirectBaseline(
+  adventures: Itinerary[],
+  directItinerary: Itinerary | undefined,
+): Itinerary[] {
+  if (!directItinerary) return adventures;
+  // Verification currently yields at most three adventures, so this remains
+  // within MAX_RESULTS while ensuring the baseline never displaces one.
+  return [...adventures, directItinerary];
 }
 
 function throwIfAllStageRequestsFailed(
@@ -193,6 +208,23 @@ export async function searchDynamicRoutes(
     dependencies.flightCalendarProvider ?? searchApiFlightCalendarProvider;
   const flightProvider = dependencies.flightProvider ?? searchApiFlightProvider;
   const warn = dependencies.warn ?? console.warn;
+  // The direct baseline is independent from hub exploration and intentionally
+  // continues in parallel with the adventure pipeline.
+  const directItineraryPromise = discoverDirectItinerary(
+    {
+      origin: request.origin,
+      destination: request.destination,
+      earliestDeparture: request.departureWindow.start,
+      adults: request.adults,
+    },
+    {
+      flightCalendarProvider,
+      flightProvider,
+      calendarCache: dependencies.flightCalendarCache,
+      flightOffersCache: dependencies.flightOffersCache,
+      warn,
+    },
+  );
   const discovery = await discoverFlexibleHubCandidates(
     {
       origin: request.origin,
@@ -206,7 +238,10 @@ export async function searchDynamicRoutes(
     },
   );
   const candidates = discovery.calendarCandidates;
-  if (candidates.length === 0) return [];
+  if (candidates.length === 0) {
+    const directItinerary = await directItineraryPromise;
+    return appendDirectBaseline([], directItinerary);
+  }
 
   const validation = await validateHubCandidates(
     { candidates, destination: request.destination },
@@ -218,7 +253,10 @@ export async function searchDynamicRoutes(
     Math.min(candidates.length, 8),
     validation.failures,
   );
-  if (validation.topCandidates.length === 0) return [];
+  if (validation.topCandidates.length === 0) {
+    const directItinerary = await directItineraryPromise;
+    return appendDirectBaseline([], directItinerary);
+  }
 
   const verification = await verifyHubCandidates(
     {
@@ -236,10 +274,12 @@ export async function searchDynamicRoutes(
     verification.failures,
   );
 
-  return selectDiverseItineraries(
+  const adventures = selectDiverseItineraries(
     verification.verifiedRoutes.map(toDynamicItinerary),
     MAX_RESULTS,
   );
+  const directItinerary = await directItineraryPromise;
+  return appendDirectBaseline(adventures, directItinerary);
 }
 
 export function isDynamicHubDiscoveryEnabled(

@@ -288,6 +288,7 @@ export async function validateHubCandidates(
             destination,
             startDate,
             endDate,
+            stopPolicy: "two_stops_or_fewer",
           }),
           cache,
           load: () =>
@@ -295,6 +296,7 @@ export async function validateHubCandidates(
               origin: candidate.airportCode,
               destination,
               departureWindow: { start: startDate, end: endDate },
+              stopPolicy: "two_stops_or_fewer",
             }),
           warn,
         });

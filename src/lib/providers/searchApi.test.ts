@@ -548,6 +548,35 @@ test("maps one-way Calendar dates without leaking raw SearchAPI entries", async 
   assert.equal(request.searchParams.get("currency"), "EUR");
 });
 
+test("Calendar accepts a caller-selected nonstop policy", async () => {
+  let requestedUrl = "";
+  const provider = createSearchApiFlightProvider({
+    apiKey: "searchapi_test_secret",
+    fetch: async (input) => {
+      requestedUrl = String(input);
+      return jsonResponse({ calendar: [] });
+    },
+  });
+
+  await provider.getFlightCalendar({
+    origin: "ATH",
+    destination: "SIN",
+    departureWindow: { start: "2026-09-20", end: "2026-09-23" },
+    stopPolicy: "nonstop",
+  });
+
+  const request = new URL(requestedUrl);
+  assert.equal(request.searchParams.get("engine"), "google_flights_calendar");
+  assert.equal(request.searchParams.get("flight_type"), "one_way");
+  assert.equal(request.searchParams.get("departure_id"), "ATH");
+  assert.equal(request.searchParams.get("arrival_id"), "SIN");
+  assert.equal(request.searchParams.get("outbound_date"), "2026-09-20");
+  assert.equal(request.searchParams.get("outbound_date_start"), "2026-09-20");
+  assert.equal(request.searchParams.get("outbound_date_end"), "2026-09-23");
+  assert.equal(request.searchParams.get("stops"), "nonstop");
+  assert.equal(request.searchParams.get("currency"), "EUR");
+});
+
 test("Calendar provider errors surface safely", async () => {
   const provider = createSearchApiFlightProvider({
     apiKey: "searchapi_test_secret",

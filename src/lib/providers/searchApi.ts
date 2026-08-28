@@ -634,7 +634,7 @@ async function fetchFlightCalendar(
     outbound_date: input.departureWindow.start,
     outbound_date_start: input.departureWindow.start,
     outbound_date_end: input.departureWindow.end,
-    stops: "two_stops_or_fewer",
+    stops: input.stopPolicy ?? "two_stops_or_fewer",
     currency: "EUR",
   });
   const controller = new AbortController();
