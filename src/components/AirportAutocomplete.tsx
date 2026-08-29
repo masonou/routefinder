@@ -64,8 +64,8 @@ export function AirportAutocomplete({
   }
 
   return (
-    <div className="space-y-2">
-      <label className="block text-sm font-medium text-stone-900" htmlFor={id}>
+    <div className="min-w-0 space-y-2">
+      <label className="block text-sm font-semibold text-slate-900" htmlFor={id}>
         {label}
       </label>
       <div className="relative">
@@ -88,13 +88,13 @@ export function AirportAutocomplete({
           aria-activedescendant={activeIndex >= 0 ? `${listboxId}-${activeIndex}` : undefined}
           aria-describedby={error ? `${id}-error` : undefined}
           aria-invalid={error ? "true" : "false"}
-          className="w-full rounded-md border border-stone-300 px-3 py-2 text-base text-stone-950 outline-none placeholder:text-stone-400 focus:border-blue-600"
+          className={`min-h-14 w-full rounded-lg border bg-white px-4 text-base text-slate-950 outline-none placeholder:text-slate-400 focus-visible:border-blue-700 focus-visible:ring-2 focus-visible:ring-blue-200 ${error ? "border-red-600" : "border-slate-300 hover:border-slate-400"}`}
         />
         {isOpen && suggestions.length > 0 ? (
           <ul
             id={listboxId}
             role="listbox"
-            className="absolute z-10 mt-1 max-h-80 w-full overflow-auto rounded-md border border-stone-300 bg-white py-1 shadow-lg"
+            className="absolute z-40 mt-2 max-h-80 w-full overflow-auto rounded-lg border border-slate-200 bg-white py-1 shadow-xl"
           >
             {suggestions.map((airport, index) => (
               <li
@@ -106,14 +106,14 @@ export function AirportAutocomplete({
                   event.preventDefault();
                   chooseAirport(airport);
                 }}
-                className={`cursor-pointer px-3 py-2 text-sm ${
-                  index === activeIndex ? "bg-blue-50 text-blue-950" : "text-stone-900"
+                className={`cursor-pointer px-4 py-3 text-sm ${
+                  index === activeIndex ? "bg-blue-50 text-blue-950" : "text-slate-900 hover:bg-slate-50"
                 }`}
               >
                 <span className="block font-medium">
                   {airport.city} — {airport.name} ({airport.iataCode})
                 </span>
-                <span className="block text-stone-600">{airport.country}</span>
+                <span className="block text-slate-600">{airport.country}</span>
               </li>
             ))}
           </ul>

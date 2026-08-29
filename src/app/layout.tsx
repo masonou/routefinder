@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Routefinder",
-  description: "Simple stopover route search.",
+  title: "Slow Layover",
+  description: "Find one-way journeys with intentional multi-day stopovers.",
 };
 
 export default function RootLayout({

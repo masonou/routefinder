@@ -12,6 +12,7 @@ import {
 } from "@/lib/utils/searchValidation";
 import { trackSearchSubmitted } from "@/lib/analytics/events";
 import { AirportAutocomplete } from "./AirportAutocomplete";
+import { FlexibleDatePicker } from "./FlexibleDatePicker";
 
 const INITIAL_VALUES: SearchFormValues = {
   origin: "",
@@ -29,6 +30,7 @@ export function SearchForm() {
   const [destinationAirport, setDestinationAirport] = useState<Airport | null>(null);
   const [values, setValues] = useState<SearchFormValues>(INITIAL_VALUES);
   const [errors, setErrors] = useState<SearchFormErrors>({});
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   function updateAirport(field: "origin" | "destination", airport: Airport | null) {
     setValues((current) => ({ ...current, [field]: airport?.iataCode ?? "" }));
@@ -43,53 +45,50 @@ export function SearchForm() {
     const nextErrors = validateSearchFormValues(values);
     setErrors(nextErrors);
     if (!hasErrors(nextErrors)) {
+      setIsSubmitting(true);
       trackSearchSubmitted({ origin: values.origin, destination: values.destination });
       router.push(buildResultsUrl(values));
     }
   }
 
   return (
-    <form className="w-full space-y-6 rounded-xl border border-stone-200 bg-white p-6" onSubmit={handleSubmit} noValidate>
-      <AirportAutocomplete
-        id="origin"
-        label="From"
-        value={originAirport}
-        onChange={(airport) => {
-          setOriginAirport(airport);
-          updateAirport("origin", airport);
-        }}
-        error={errors.origin}
-        placeholder="Brisbane or BNE"
-      />
-      <AirportAutocomplete
-        id="destination"
-        label="To"
-        value={destinationAirport}
-        onChange={(airport) => {
-          setDestinationAirport(airport);
-          updateAirport("destination", airport);
-        }}
-        error={errors.destination}
-        placeholder="Larnaca or LCA"
-      />
-      <div className="space-y-2">
-        <label className="block text-sm font-medium text-stone-900" htmlFor="earliest-departure">
-          Earliest departure
-        </label>
-        <input
-          id="earliest-departure"
-          type="date"
-          value={values.earliestDeparture}
-          onChange={(event) => updateDate(event.target.value)}
-          aria-describedby={errors.dates ? "dates-error" : undefined}
-          aria-invalid={errors.dates ? "true" : "false"}
-          className="w-full rounded-md border border-stone-300 px-3 py-2 text-base text-stone-950 outline-none focus:border-blue-600"
-        />
+    <form className="w-full rounded-2xl border border-slate-100 bg-white p-5 shadow-md shadow-slate-900/[0.06] sm:p-6" onSubmit={handleSubmit} noValidate>
+      <div className="mb-4 flex items-center gap-2 text-sm font-semibold text-slate-700">
+        <span className="inline-block size-2 rounded-full bg-blue-700" aria-hidden="true" />
+        One-way journey
       </div>
-      {errors.dates ? <p id="dates-error" className="text-sm text-red-700">{errors.dates}</p> : null}
-      <button type="submit" className="inline-flex w-full items-center justify-center rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700">
-        Find routes
-      </button>
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4 xl:gap-5">
+        <AirportAutocomplete
+          id="origin"
+          label="From"
+          value={originAirport}
+          onChange={(airport) => {
+            setOriginAirport(airport);
+            updateAirport("origin", airport);
+          }}
+          error={errors.origin}
+          placeholder="Brisbane or BNE"
+        />
+        <AirportAutocomplete
+          id="destination"
+          label="To"
+          value={destinationAirport}
+          onChange={(airport) => {
+            setDestinationAirport(airport);
+            updateAirport("destination", airport);
+          }}
+          error={errors.destination}
+          placeholder="Larnaca or LCA"
+        />
+        <FlexibleDatePicker value={values.earliestDeparture} onChange={updateDate} error={errors.dates} />
+        <button
+          type="submit"
+          disabled={isSubmitting}
+          className="inline-flex min-h-14 w-full items-center justify-center self-start rounded-lg bg-blue-700 px-5 text-base font-semibold text-white outline-none transition hover:bg-blue-800 focus-visible:ring-2 focus-visible:ring-blue-700 focus-visible:ring-offset-2 disabled:cursor-wait disabled:bg-blue-600 md:mt-8"
+        >
+          {isSubmitting ? "Searching…" : "Find stopover routes"}
+        </button>
+      </div>
     </form>
   );
 }
