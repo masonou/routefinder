@@ -7,6 +7,7 @@ import {
 import {
   CALENDAR_VALIDATION_CONCURRENCY,
   MAX_CALENDAR_CANDIDATES,
+  MAX_CONNECTING_FALLBACK_CALENDAR_CALLS,
   MAX_HUB_STAY_NIGHTS,
   MAX_VALIDATED_HUBS,
   MIN_HUB_STAY_NIGHTS,
@@ -31,7 +32,10 @@ export interface OnwardOption {
   currency: string;
 }
 
+export type OnwardFlightPolicy = "nonstop" | "connecting_fallback";
+
 export interface ValidatedHubCandidate extends HubCandidate {
+  onwardPolicy: OnwardFlightPolicy;
   onwardOptions: OnwardOption[];
   bestOnwardDate: string;
   bestOnwardPrice: number;
@@ -56,6 +60,9 @@ export interface ValidateHubCandidatesResult {
   rejectedNoViableDates: string[];
   failures: CalendarValidationFailure[];
   calendarLookups: CalendarValidationLookup[];
+  nonstopCalendarChecks: number;
+  fallbackCalendarChecks: number;
+  cleanHubCount: number;
 }
 
 export interface ValidateHubCandidatesInput {
@@ -143,6 +150,7 @@ function selectBestOnwardOption(options: OnwardOption[]): OnwardOption {
 function withSelectedOnwardOption(
   candidate: HubCandidate,
   onwardOptions: OnwardOption[],
+  onwardPolicy: OnwardFlightPolicy,
 ): ValidatedHubCandidate {
   const best = selectBestOnwardOption(onwardOptions);
   const estimatedTotalPrice =
@@ -153,6 +161,7 @@ function withSelectedOnwardOption(
 
   return {
     ...candidate,
+    onwardPolicy,
     onwardOptions,
     bestOnwardDate: best.departureDate,
     bestOnwardPrice: best.indicativePrice,
@@ -269,18 +278,22 @@ export async function validateHubCandidates(
 
   const cache = options.cache === undefined ? getFlightCalendarCache() : options.cache;
   const warn = options.warn ?? console.warn;
-  const pendingCandidates: PendingCandidate[] = input.candidates
-    .slice(0, MAX_CALENDAR_CANDIDATES)
-    .map((candidate) => ({
+  const validate = async (
+    candidates: HubCandidate[],
+    onwardPolicy: OnwardFlightPolicy,
+  ): Promise<CandidateValidationOutcome[]> => {
+    const pendingCandidates: PendingCandidate[] = candidates.map((candidate) => ({
       candidate,
       startDate: addCalendarDays(candidate.firstLegDepartureDate, MIN_HUB_STAY_NIGHTS),
       endDate: addCalendarDays(candidate.firstLegDepartureDate, MAX_HUB_STAY_NIGHTS),
     }));
+    const stopPolicy =
+      onwardPolicy === "nonstop" ? "nonstop" : "two_stops_or_fewer";
 
-  const outcomes = await mapWithConcurrency(
-    pendingCandidates,
-    CALENDAR_VALIDATION_CONCURRENCY,
-    async ({ candidate, startDate, endDate }): Promise<CandidateValidationOutcome> => {
+    return mapWithConcurrency(
+      pendingCandidates,
+      CALENDAR_VALIDATION_CONCURRENCY,
+      async ({ candidate, startDate, endDate }): Promise<CandidateValidationOutcome> => {
       try {
         const result = await runCachedFlightCalendar({
           key: buildFlightCalendarCacheKey({
@@ -288,7 +301,7 @@ export async function validateHubCandidates(
             destination,
             startDate,
             endDate,
-            stopPolicy: "two_stops_or_fewer",
+            stopPolicy,
           }),
           cache,
           load: () =>
@@ -296,7 +309,7 @@ export async function validateHubCandidates(
               origin: candidate.airportCode,
               destination,
               departureWindow: { start: startDate, end: endDate },
-              stopPolicy: "two_stops_or_fewer",
+              stopPolicy,
             }),
           warn,
         });
@@ -310,7 +323,7 @@ export async function validateHubCandidates(
 
         return {
           type: "success",
-          candidate: withSelectedOnwardOption(candidate, onwardOptions),
+          candidate: withSelectedOnwardOption(candidate, onwardOptions, onwardPolicy),
           cacheStatus: result.cacheStatus,
         };
       } catch (error) {
@@ -321,29 +334,55 @@ export async function validateHubCandidates(
         warn(`Calendar validation failed for ${candidate.airportCode}: ${message}`);
         return { type: "failure", airportCode: candidate.airportCode, message };
       }
-    },
-  );
+      },
+    );
+  };
 
-  const validatedCandidates = collapseValidatedHubVariants(rankValidatedCandidates(
-    outcomes
+  const calendarCandidates = input.candidates.slice(0, MAX_CALENDAR_CANDIDATES);
+  const nonstopOutcomes = await validate(calendarCandidates, "nonstop");
+  const cleanCandidates = collapseValidatedHubVariants(rankValidatedCandidates(
+    nonstopOutcomes
       .filter((outcome): outcome is CandidateValidationSuccess => outcome.type === "success")
       .map((outcome) => outcome.candidate),
   ));
+  const cleanHubs = new Set(
+    cleanCandidates.map((candidate) => candidate.airportCode.trim().toUpperCase()),
+  );
+  const fallbackCandidates = cleanCandidates.length >= MAX_VALIDATED_HUBS
+    ? []
+    : calendarCandidates
+      .filter((candidate) => !cleanHubs.has(candidate.airportCode.trim().toUpperCase()))
+      .slice(0, MAX_CONNECTING_FALLBACK_CALENDAR_CALLS);
+  const fallbackOutcomes = await validate(fallbackCandidates, "connecting_fallback");
+  const fallbackValidatedCandidates = collapseValidatedHubVariants(rankValidatedCandidates(
+    fallbackOutcomes
+      .filter((outcome): outcome is CandidateValidationSuccess => outcome.type === "success")
+      .map((outcome) => outcome.candidate),
+  ));
+  const validatedCandidates = [...cleanCandidates, ...fallbackValidatedCandidates];
+  const outcomes = [...nonstopOutcomes, ...fallbackOutcomes];
 
   return {
     validatedCandidates,
     topCandidates: validatedCandidates.slice(0, MAX_VALIDATED_HUBS),
-    rejectedNoViableDates: outcomes
-      .filter((outcome): outcome is CandidateValidationRejected => outcome.type === "rejected")
-      .map((outcome) => outcome.airportCode),
-    failures: outcomes
-      .filter((outcome): outcome is CandidateValidationFailure => outcome.type === "failure")
-      .map(({ airportCode, message }) => ({ airportCode, message })),
+    rejectedNoViableDates: [...new Set(
+      outcomes
+        .filter((outcome): outcome is CandidateValidationRejected => outcome.type === "rejected")
+        .map((outcome) => outcome.airportCode),
+    )],
+    failures: [...new Map(
+      outcomes
+        .filter((outcome): outcome is CandidateValidationFailure => outcome.type === "failure")
+        .map(({ airportCode, message }) => [airportCode, { airportCode, message }] as const),
+    ).values()],
     calendarLookups: outcomes
       .filter((outcome): outcome is CandidateValidationSuccess => outcome.type === "success")
       .map(({ candidate, cacheStatus }) => ({
         airportCode: candidate.airportCode,
         cacheStatus,
       })),
+    nonstopCalendarChecks: calendarCandidates.length,
+    fallbackCalendarChecks: fallbackCandidates.length,
+    cleanHubCount: cleanCandidates.length,
   };
 }

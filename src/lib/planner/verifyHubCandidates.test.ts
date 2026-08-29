@@ -26,6 +26,7 @@ function hub(
     currency: "EUR",
     firstLegDurationMinutes: 120,
     candidateScore: 500,
+    onwardPolicy: "connecting_fallback",
     onwardOptions: [],
     bestOnwardDate: "2026-09-05",
     bestOnwardPrice: 200,
@@ -117,6 +118,42 @@ test("requires a nonstop first leg and permits onward routes with at most two st
     { cache: null },
   );
   assert.match(tooManyOnwardStops.rejected[0]?.reason ?? "", /two stops or fewer/);
+});
+
+test("enforces a clean Calendar candidate's nonstop detailed onward policy", async () => {
+  const result = await verifyHubCandidates(
+    { origin: "LCA", destination: "DPS", candidates: [hub("ATH", { onwardPolicy: "nonstop" })] },
+    providerWith({
+      "LCA-ATH": [offer("first", "LCA", "ATH", "2026-09-01", 100, 120)],
+      "ATH-DPS": [offer("connection", "ATH", "DPS", "2026-09-05", 200, 600, 1)],
+    }),
+    { cache: null },
+  );
+
+  assert.deepEqual(result.verifiedRoutes, []);
+  assert.match(result.rejected[0]?.reason ?? "", /nonstop detailed onward/);
+});
+
+test("keeps fallback connections but upgrades a fallback detailed nonstop offer to clean", async () => {
+  const connecting = await verifyHubCandidates(
+    { origin: "LCA", destination: "DPS", candidates: [hub("ATH")] },
+    providerWith({
+      "LCA-ATH": [offer("first", "LCA", "ATH", "2026-09-01", 100, 120)],
+      "ATH-DPS": [offer("connection", "ATH", "DPS", "2026-09-05", 200, 600, 1)],
+    }),
+    { cache: null },
+  );
+  assert.equal(connecting.verifiedRoutes[0]?.onwardPolicy, "connecting_fallback");
+
+  const upgraded = await verifyHubCandidates(
+    { origin: "LCA", destination: "DPS", candidates: [hub("DXB")] },
+    providerWith({
+      "LCA-DXB": [offer("first", "LCA", "DXB", "2026-09-01", 100, 120)],
+      "DXB-DPS": [offer("nonstop", "DXB", "DPS", "2026-09-05", 200, 600)],
+    }),
+    { cache: null },
+  );
+  assert.equal(upgraded.verifiedRoutes[0]?.onwardPolicy, "nonstop");
 });
 
 test("selects an onward route where substantial flight quality beats a small saving", async () => {

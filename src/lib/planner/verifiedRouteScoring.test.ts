@@ -59,6 +59,7 @@ function route(
     originToHubDistanceKm: 1,
     hubToDestinationDistanceKm: 1,
     candidateScore: 1,
+    onwardPolicy: stops === 0 ? "nonstop" : "connecting_fallback",
     onwardOptions: [],
     bestOnwardDate: "2026-09-05",
     bestOnwardPrice: price,
@@ -67,6 +68,7 @@ function route(
   } satisfies ValidatedHubCandidate;
   return {
     hub,
+    onwardPolicy: stops === 0 ? "nonstop" : "connecting_fallback",
     firstLeg: offer("ORG", airportCode),
     secondLeg: offer(airportCode, "DST"),
     hubStayNights: stayNights,

@@ -58,6 +58,81 @@ test("selects a mildly more expensive four-night onward option", async () => {
   assert.equal(validated?.bestOnwardDate, "2026-09-05");
   assert.equal(validated?.bestStayNights, 4);
   assert.equal(validated?.estimatedTotalPrice, 220);
+  assert.equal(validated?.onwardPolicy, "nonstop");
+});
+
+test("uses no fallback Calendar calls once three clean hubs survive", async () => {
+  const policies: string[] = [];
+  const result = await validateHubCandidates(
+    { candidates: [candidate("AAA"), candidate("BBB"), candidate("CCC")], destination: "DPS" },
+    {
+      async getFlightCalendar(input) {
+        policies.push(input.stopPolicy ?? "");
+        return [{ departureDate: "2026-09-05", price: 100, currency: "EUR", hasFlights: true }];
+      },
+    },
+    { cache: null },
+  );
+
+  assert.deepEqual(policies, ["nonstop", "nonstop", "nonstop"]);
+  assert.equal(result.cleanHubCount, 3);
+  assert.equal(result.fallbackCalendarChecks, 0);
+});
+
+test("uses connecting Calendar searches only to fill clean-hub gaps and caps them", async () => {
+  const calls: Array<{ origin: string; policy: string | undefined }> = [];
+  const candidates = Array.from({ length: MAX_CALENDAR_CANDIDATES }, (_, index) =>
+    candidate(`H${index}`),
+  );
+  const result = await validateHubCandidates(
+    { candidates, destination: "DPS" },
+    {
+      async getFlightCalendar(input) {
+        calls.push({ origin: input.origin, policy: input.stopPolicy });
+        if (input.stopPolicy === "nonstop") return [];
+        return [{ departureDate: "2026-09-05", price: 100, currency: "EUR", hasFlights: true }];
+      },
+    },
+    { cache: null },
+  );
+
+  assert.equal(result.nonstopCalendarChecks, MAX_CALENDAR_CANDIDATES);
+  assert.equal(result.cleanHubCount, 0);
+  assert.equal(result.fallbackCalendarChecks, 4);
+  assert.equal(calls.filter((call) => call.policy === "two_stops_or_fewer").length, 4);
+  assert.ok(result.validatedCandidates.every((entry) => entry.onwardPolicy === "connecting_fallback"));
+});
+
+test("uses fallback only for non-clean hubs when two clean hubs survive", async () => {
+  const calls: Array<{ origin: string; policy: string | undefined }> = [];
+  const result = await validateHubCandidates(
+    { candidates: [candidate("AAA"), candidate("BBB"), candidate("CCC")], destination: "DPS" },
+    {
+      async getFlightCalendar(input) {
+        calls.push({ origin: input.origin, policy: input.stopPolicy });
+        const clean = input.origin === "AAA" || input.origin === "BBB";
+        if (input.stopPolicy === "nonstop") {
+          return clean
+            ? [{ departureDate: "2026-09-05", price: 100, currency: "EUR", hasFlights: true }]
+            : [];
+        }
+        return [{ departureDate: "2026-09-05", price: 100, currency: "EUR", hasFlights: true }];
+      },
+    },
+    { cache: null },
+  );
+
+  assert.equal(result.cleanHubCount, 2);
+  assert.equal(result.fallbackCalendarChecks, 1);
+  assert.deepEqual(
+    calls.filter((call) => call.policy === "two_stops_or_fewer").map((call) => call.origin),
+    ["CCC"],
+  );
+  assert.deepEqual(result.topCandidates.map((entry) => entry.onwardPolicy), [
+    "nonstop",
+    "nonstop",
+    "connecting_fallback",
+  ]);
 });
 
 test("allows a substantially cheaper non-target stay and rejects unpriced or unavailable dates", async () => {

@@ -101,10 +101,14 @@ if (!origin || !destination || !departureDate) {
   );
 
   console.log("\nCALENDAR VALIDATION\n");
+  console.log(
+    `Nonstop Calendar checks: ${validation.nonstopCalendarChecks}; clean hubs found: ${validation.cleanHubCount}; fallback Calendar checks: ${validation.fallbackCalendarChecks}.`,
+  );
   console.table(
     validation.validatedCandidates.map((candidate, index) => ({
       rank: index + 1,
       airport: candidate.airportCode,
+      type: candidate.onwardPolicy === "nonstop" ? "CLEAN" : "CONNECTING_FALLBACK",
       bestOnwardDate: candidate.bestOnwardDate,
       stayNights: candidate.bestStayNights,
       onwardPrice: candidate.bestOnwardPrice,
@@ -153,6 +157,9 @@ if (!origin || !destination || !departureDate) {
   }
   detailed.verifiedRoutes.forEach((route, index) => {
     console.log(`#${index + 1} ${route.hub.airportCode} — ${route.hub.city}`);
+    console.log(
+      `Type: ${route.onwardPolicy === "nonstop" ? "CLEAN" : "CONNECTING_FALLBACK"} · onward stops: ${route.secondLeg.stops} · score: ${route.score}`,
+    );
     printDetailedLeg("First leg", route.firstLeg);
     console.log(`${route.hubStayNights} nights in ${route.hub.city}`);
     printDetailedLeg("Onward leg", route.secondLeg);

@@ -5,6 +5,7 @@ import {
   appendDirectBaseline,
   discoverFlexibleHubCandidates,
   getInitialDepartureDates,
+  orderAdventureItineraries,
   searchDynamicRoutes,
   toDynamicItinerary,
 } from "./searchDynamicRoutes.ts";
@@ -105,7 +106,7 @@ function flightProvider(): FlightProvider {
       if (input.origin === "LCA") {
         return [offer(`first-${input.destination}`, "LCA", input.destination, "2026-09-01", 200, 240)];
       }
-      return [offer(`second-${input.origin}`, input.origin, "DPS", "2026-09-05", 300, 480, 1)];
+      return [offer(`second-${input.origin}`, input.origin, "DPS", "2026-09-05", 300, 480)];
     },
   };
 }
@@ -127,6 +128,7 @@ function verifiedRouteWithLocation(
     originToHubDistanceKm: 1,
     hubToDestinationDistanceKm: 1,
     candidateScore: 1,
+    onwardPolicy: "connecting_fallback",
     onwardOptions: [],
     bestOnwardDate: "2026-09-05",
     bestOnwardPrice: 300,
@@ -135,6 +137,7 @@ function verifiedRouteWithLocation(
   } satisfies ValidatedHubCandidate;
   return {
     hub,
+    onwardPolicy: "connecting_fallback",
     firstLeg: offer(`first-${airportCode}`, "LCA", airportCode, "2026-09-01", 200, 240),
     secondLeg: offer(`second-${airportCode}`, airportCode, "DPS", "2026-09-05", 300, 480, 1),
     hubStayNights: 4,
@@ -197,11 +200,11 @@ test("dynamic orchestration maps verified routes into generic itineraries and ke
   assert.equal(detailedCalls, 5);
   assert.equal(itineraries.length, 3);
   assert.deepEqual(
-    itineraries.slice(0, 2).map((itinerary) => itinerary.legs[0]?.stopoverAfter?.airportCode).sort(),
+    itineraries.slice(1).map((itinerary) => itinerary.legs[0]?.stopoverAfter?.airportCode).sort(),
     ["BKK", "DXB"],
   );
   const stopoversByCode = new Map(
-    itineraries.slice(0, 2).map((itinerary) => {
+    itineraries.slice(1).map((itinerary) => {
       const stopover = itinerary.legs[0]?.stopoverAfter;
       return [stopover?.airportCode, stopover] as const;
     }),
@@ -218,7 +221,7 @@ test("dynamic orchestration maps verified routes into generic itineraries and ke
     country: "Thailand",
     nights: 4,
   });
-  for (const itinerary of itineraries.slice(0, 2)) {
+  for (const itinerary of itineraries.slice(1)) {
     assert.equal(itinerary.origin, "LCA");
     assert.equal(itinerary.destination, "DPS");
     assert.equal(itinerary.legs.length, 2);
@@ -227,13 +230,13 @@ test("dynamic orchestration maps verified routes into generic itineraries and ke
     assert.equal(itinerary.legs[1]?.flight.departureAt.slice(0, 10), "2026-09-05");
     assert.equal(itinerary.totalPrice.amount, 500);
     assert.equal(itinerary.totalFlightDurationMinutes, 720);
-    assert.equal(itinerary.totalStops, 1);
+    assert.equal(itinerary.totalStops, 0);
     assert.match(itinerary.id, /^LCA__DPS__/);
     assert.ok(itinerary.legs[0]?.flight.bookingReference);
     assert.ok(itinerary.legs[1]?.flight.bookingReference);
     assert.doesNotMatch(itinerary.id, /opaque-/);
   }
-  const direct = itineraries.at(-1);
+  const direct = itineraries[0];
   assert.equal(direct?.legs.length, 1);
   assert.equal(direct?.legs[0]?.stopoverAfter, undefined);
   assert.equal(direct?.legs[0]?.flight.bookingReference, "opaque-first-DPS");
@@ -483,7 +486,7 @@ test("the flexible pipeline remains within the 4 Explore, 9 Calendar, and 7 deta
   assert.ok(exploreCalls + calendarCalls + detailedCalls <= 20);
 });
 
-test("a direct baseline is appended after three adventures without replacing one", () => {
+test("a direct baseline is first and does not replace any adventure", () => {
   const itinerary = (id: string) => createItinerary({
     origin: "ATH",
     destination: "SIN",
@@ -494,7 +497,35 @@ test("a direct baseline is appended after three adventures without replacing one
   const direct = itinerary("direct");
   assert.deepEqual(
     appendDirectBaseline(adventures, direct).map((item) => item.id),
-    [...adventures, direct].map((item) => item.id),
+    [direct, ...adventures].map((item) => item.id),
   );
   assert.deepEqual(appendDirectBaseline(adventures, undefined), adventures);
+});
+
+test("portfolio keeps clean adventures ahead of higher-scoring connecting fallbacks", () => {
+  const cleanHigh = verifiedRouteWithLocation("AAA", "A", "Test");
+  cleanHigh.onwardPolicy = "nonstop";
+  cleanHigh.hub.onwardPolicy = "nonstop";
+  cleanHigh.score = 80;
+  const cleanLow = verifiedRouteWithLocation("BBB", "B", "Test");
+  cleanLow.onwardPolicy = "nonstop";
+  cleanLow.hub.onwardPolicy = "nonstop";
+  cleanLow.score = 70;
+  const connecting = verifiedRouteWithLocation("CCC", "C", "Test");
+  connecting.score = 95;
+  const direct = createItinerary({
+    origin: "LCA",
+    destination: "DPS",
+    legs: [{ flight: offer("direct", "LCA", "DPS", "2026-09-01", 100, 100) }],
+    score: 0,
+  });
+
+  const portfolio = appendDirectBaseline(
+    orderAdventureItineraries([connecting, cleanLow, cleanHigh]),
+    direct,
+  );
+  assert.deepEqual(
+    portfolio.map((itinerary) => itinerary.legs[0]?.flight.id),
+    ["direct", "first-AAA", "first-BBB", "first-CCC"],
+  );
 });

@@ -6,7 +6,7 @@ import {
 } from "../cache/directDestinationsCache.ts";
 import type { FlightCalendarCache } from "../cache/flightCalendarCache.ts";
 import type { FlightOffersCache } from "../cache/flightOffersCache.ts";
-import { DEPARTURE_FLEX_DAYS, MAX_RESULTS } from "../constants/planner.ts";
+import { DEPARTURE_FLEX_DAYS, MAX_VERIFIED_HUBS } from "../constants/planner.ts";
 import {
   searchApiDirectDestinationsProvider,
   searchApiFlightCalendarProvider,
@@ -87,9 +87,24 @@ export function appendDirectBaseline(
   directItinerary: Itinerary | undefined,
 ): Itinerary[] {
   if (!directItinerary) return adventures;
-  // Verification currently yields at most three adventures, so this remains
-  // within MAX_RESULTS while ensuring the baseline never displaces one.
-  return [...adventures, directItinerary];
+  // The reference route never competes with or displaces an adventure.
+  return [directItinerary, ...adventures];
+}
+
+export function orderAdventureItineraries(routes: VerifiedHubRoute[]): Itinerary[] {
+  const clean = routes.filter((route) => route.onwardPolicy === "nonstop");
+  const connectingFallback = routes.filter(
+    (route) => route.onwardPolicy === "connecting_fallback",
+  );
+  // Diversity selection is intentionally run per product category so its
+  // score-based sort cannot let a connecting route leapfrog a clean adventure.
+  return [
+    ...selectDiverseItineraries(clean.map(toDynamicItinerary), MAX_VERIFIED_HUBS),
+    ...selectDiverseItineraries(
+      connectingFallback.map(toDynamicItinerary),
+      MAX_VERIFIED_HUBS,
+    ),
+  ].slice(0, MAX_VERIFIED_HUBS);
 }
 
 function throwIfAllStageRequestsFailed(
@@ -276,10 +291,7 @@ export async function searchDynamicRoutes(
     verification.failures,
   );
 
-  const adventures = selectDiverseItineraries(
-    verification.verifiedRoutes.map(toDynamicItinerary),
-    MAX_RESULTS,
-  );
+  const adventures = orderAdventureItineraries(verification.verifiedRoutes);
   const directItinerary = await directItineraryPromise;
   return appendDirectBaseline(adventures, directItinerary);
 }

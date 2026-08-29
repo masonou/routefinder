@@ -22,7 +22,7 @@ import {
 } from "../constants/planner.ts";
 import type { FlightProvider } from "../providers/types.ts";
 import { calculateHubStayNights, isFlightWithinDepartureWindow, isReasonableFlight } from "./filters.ts";
-import type { ValidatedHubCandidate } from "./validateHubCandidates.ts";
+import type { OnwardFlightPolicy, ValidatedHubCandidate } from "./validateHubCandidates.ts";
 import type { FlightOffer, Money } from "../../types/flight.ts";
 import {
   calculateItineraryFlightDuration,
@@ -41,6 +41,7 @@ export interface VerifiedRouteScoreBreakdown {
 
 export interface VerifiedHubRoute {
   hub: ValidatedHubCandidate;
+  onwardPolicy: OnwardFlightPolicy;
   firstLeg: FlightOffer;
   secondLeg: FlightOffer;
   hubStayNights: number;
@@ -147,9 +148,12 @@ function onwardOfferCost(offer: FlightOffer): number {
   );
 }
 
-function selectSecondLeg(offers: FlightOffer[]): FlightOffer | undefined {
+function selectSecondLeg(
+  offers: FlightOffer[],
+  onwardPolicy: OnwardFlightPolicy,
+): FlightOffer | undefined {
   return [...offers]
-    .filter((offer) => offer.stops <= 2)
+    .filter((offer) => onwardPolicy === "nonstop" ? offer.stops === 0 : offer.stops <= 2)
     .sort(
       (left, right) =>
         onwardOfferCost(left) - onwardOfferCost(right) ||
@@ -199,6 +203,9 @@ function createVerifiedRoute(
 
   return {
     hub,
+    // Detailed offers are the final authority: a fallback Calendar result can
+    // still turn into the cleaner nonstop itinerary.
+    onwardPolicy: secondLeg.stops === 0 ? "nonstop" : "connecting_fallback",
     firstLeg,
     secondLeg,
     hubStayNights,
@@ -469,12 +476,15 @@ export async function verifyHubCandidates(
               hub.bestOnwardDate,
             ),
           ),
+          hub.onwardPolicy,
         );
         if (!secondLeg) {
           return {
             type: "rejected",
             airportCode: hub.airportCode,
-            reason: "No usable detailed onward flight with two stops or fewer was found.",
+            reason: hub.onwardPolicy === "nonstop"
+              ? "No usable nonstop detailed onward flight was found."
+              : "No usable detailed onward flight with two stops or fewer was found.",
             lookups: [
               { airportCode: hub.airportCode, leg: firstResult.leg, cacheStatus: firstResult.cacheStatus },
               { airportCode: hub.airportCode, leg: secondResult.leg, cacheStatus: secondResult.cacheStatus },
