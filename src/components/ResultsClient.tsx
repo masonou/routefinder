@@ -11,6 +11,8 @@ import {
   trackSearchFailed,
 } from "../lib/analytics/events";
 import { ItineraryCard } from "./ItineraryCard";
+import { SearchLoadingState } from "./SearchLoadingState";
+import { getResultsViewState } from "./resultsViewState";
 
 interface SearchApiResponse {
   count: number;
@@ -105,7 +107,9 @@ export function ResultsClient({ request }: ResultsClientProps) {
     retryToken,
   ]);
 
-  if (errorMessage) {
+  const viewState = getResultsViewState(itineraries, errorMessage);
+
+  if (viewState === "error") {
     return (
       <div className="space-y-3" aria-live="polite">
         <p className="text-base font-medium text-stone-950">Search failed.</p>
@@ -126,15 +130,11 @@ export function ResultsClient({ request }: ResultsClientProps) {
     );
   }
 
-  if (itineraries === null) {
-    return (
-      <p className="text-base text-stone-900" aria-live="polite">
-        Finding routes…
-      </p>
-    );
+  if (viewState === "loading") {
+    return <SearchLoadingState origin={request.origin} destination={request.destination} />;
   }
 
-  if (itineraries.length === 0) {
+  if (viewState === "empty") {
     return (
       <div className="space-y-2">
         <p className="text-base font-medium text-stone-950">No routes found.</p>
@@ -145,7 +145,7 @@ export function ResultsClient({ request }: ResultsClientProps) {
 
   return (
     <div className="space-y-4">
-      {itineraries.map((itinerary, index) => (
+      {(itineraries ?? []).map((itinerary, index) => (
         <ItineraryCard key={itinerary.id} itinerary={itinerary} rank={index + 1} />
       ))}
       <p className="text-sm text-stone-600">Indicative fares only.</p>

@@ -6,7 +6,8 @@ import {
   createSearchRequestFromFormValues,
   type SearchFormValues,
 } from "../../lib/utils/searchValidation.ts";
-import { formatDateLabel } from "../../lib/utils/formatFlight.ts";
+import { formatDateRangeCompact } from "../../lib/utils/formatFlight.ts";
+import { getFlexibleDepartureDates } from "../../lib/utils/flexibleDepartureDates.ts";
 
 type ResultsPageProps = {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
@@ -40,7 +41,7 @@ export default async function ResultsPage({ searchParams }: ResultsPageProps) {
 
   if (!request) {
     return (
-      <main className="min-h-screen bg-stone-50 px-4 py-10 text-stone-950 sm:px-6">
+      <main className="min-h-svh bg-[#f7f8fa] px-4 py-10 text-slate-950 sm:px-6">
         <div className="mx-auto flex w-full max-w-3xl flex-col gap-4">
           <p className="text-xl font-semibold">Invalid search.</p>
           <Link href="/" className="text-sm text-blue-700 underline">
@@ -53,19 +54,20 @@ export default async function ResultsPage({ searchParams }: ResultsPageProps) {
 
   const origin = findAirportByCode(request.origin);
   const destination = findAirportByCode(request.destination);
+  const departureDates = getFlexibleDepartureDates(request.earliestDeparture);
 
   return (
-    <main className="min-h-screen bg-stone-50 px-4 py-10 text-stone-950 sm:px-6">
+    <main className="min-h-svh bg-[#f7f8fa] px-4 py-10 text-slate-950 sm:px-6">
       <div className="mx-auto flex w-full max-w-3xl flex-col gap-6">
-        <header className="space-y-2">
-          <p className="text-2xl font-semibold">
+        <header className="min-w-0 space-y-2">
+          <h1 className="break-words text-2xl font-semibold">
             {origin ? `${origin.city} (${origin.iataCode})` : request.origin} → {" "}
             {destination
               ? `${destination.city} (${destination.iataCode})`
               : request.destination}
-          </p>
-          <p className="text-sm text-stone-700">
-            Depart from {formatDateLabel(request.earliestDeparture)}
+          </h1>
+          <p className="text-sm text-slate-600">
+            Departing {formatDateRangeCompact(request.earliestDeparture, departureDates.at(-1) ?? request.earliestDeparture)}
           </p>
           <Link href="/" className="text-sm text-blue-700 underline">
             New search

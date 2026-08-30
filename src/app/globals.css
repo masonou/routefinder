@@ -17,3 +17,46 @@ body {
   color: var(--foreground);
   font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
 }
+
+@keyframes slow-layover-route-progress {
+  0%,
+  12% {
+    left: 0;
+  }
+
+  82%,
+  100% {
+    left: calc(100% - 1rem);
+  }
+}
+
+@keyframes slow-layover-skeleton-pulse {
+  0%,
+  100% {
+    opacity: 0.58;
+  }
+
+  50% {
+    opacity: 1;
+  }
+}
+
+.search-loading-plane {
+  animation: slow-layover-route-progress 4.8s ease-in-out infinite;
+}
+
+.search-loading-skeleton {
+  animation: slow-layover-skeleton-pulse 2.6s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .search-loading-plane {
+    animation: none;
+    left: 50%;
+    transform: translate(-50%, -50%);
+  }
+
+  .search-loading-skeleton {
+    animation: none;
+  }
+}
