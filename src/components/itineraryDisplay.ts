@@ -12,7 +12,7 @@ function nonEmptyText(value: string | undefined): string | undefined {
   return trimmed || undefined;
 }
 
-function getStopoverLocation(stopover: Itinerary["legs"][number]["stopoverAfter"]): string {
+export function getStopoverLocation(stopover: Itinerary["legs"][number]["stopoverAfter"]): string {
   if (!stopover) return "";
 
   const candidateCity = nonEmptyText(stopover.city);

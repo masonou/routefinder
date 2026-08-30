@@ -1,29 +1,11 @@
 import type { FlightOffer } from "../types/flight.ts";
+import { formatFlightTime } from "../lib/utils/formatFlight.ts";
 import {
-  formatDuration,
-  formatFlightDate,
-  formatFlightTime,
-  formatMoney,
-} from "../lib/utils/formatFlight.ts";
-
-function getRouteLabel(offer: FlightOffer): string {
-  const stops = offer.segments.map((segment) => segment.destination);
-  return [offer.origin, ...stops].join(" → ");
-}
-
-function getAirlineLabel(offer: FlightOffer): string {
-  return Array.from(
-    new Set(offer.segments.map((segment) => segment.airlineName)),
-  ).join(", ");
-}
-
-function getStopLabel(stops: number): string {
-  if (stops === 0) {
-    return "Direct";
-  }
-
-  return `${stops} ${stops === 1 ? "stop" : "stops"}`;
-}
+  formatResultMoney,
+  getFlightAirlines,
+  getFlightDetailLabel,
+  getFlightRouteLabel,
+} from "./itineraryPresentation";
 
 interface FlightLegProps {
   leg: FlightOffer;
@@ -31,22 +13,21 @@ interface FlightLegProps {
 
 export function FlightLeg({ leg }: FlightLegProps) {
   return (
-    <section className="space-y-1">
-      <h3 className="text-base font-semibold text-stone-950">
-        {getRouteLabel(leg)}
-      </h3>
-      <p className="text-sm text-stone-700">
-        {formatFlightDate(leg.departureAt)} ·{" "}
-        {formatFlightTime(leg.departureAt)}–{formatFlightTime(leg.arrivalAt)}
-      </p>
-      <p className="text-sm text-stone-700">
-        {getStopLabel(leg.stops)} · {formatDuration(leg.durationMinutes)}
-      </p>
-      <p className="text-sm text-stone-700">{getAirlineLabel(leg)}</p>
-      <p className="text-sm font-medium text-stone-950">
-        ~{" "}
-        {formatMoney(leg.indicativePrice.amount, leg.indicativePrice.currency)}
-      </p>
+    <section className="grid gap-1.5 sm:grid-cols-[minmax(0,1fr)_auto] sm:gap-x-6">
+      <div className="min-w-0">
+        <p className="break-words text-sm font-semibold text-slate-950">
+          {getFlightRouteLabel(leg)}
+        </p>
+        <p className="mt-1 text-sm text-slate-600">
+          {formatFlightTime(leg.departureAt)}–{formatFlightTime(leg.arrivalAt)} · {getFlightAirlines(leg)}
+        </p>
+      </div>
+      <div className="flex items-center justify-between gap-3 text-sm text-slate-600 sm:block sm:text-right">
+        <p>{getFlightDetailLabel(leg)}</p>
+        <p className="mt-0.5 font-medium text-slate-900">
+          {formatResultMoney(leg.indicativePrice.amount, leg.indicativePrice.currency)} fare
+        </p>
+      </div>
     </section>
   );
 }

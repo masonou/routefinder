@@ -10,8 +10,9 @@ import {
   trackResultsFound,
   trackSearchFailed,
 } from "../lib/analytics/events";
-import { ItineraryCard } from "./ItineraryCard";
+import { DirectItineraryCard, ItineraryCard } from "./ItineraryCard";
 import { SearchLoadingState } from "./SearchLoadingState";
+import { partitionItineraries } from "./itineraryPresentation";
 import { getResultsViewState } from "./resultsViewState";
 
 interface SearchApiResponse {
@@ -112,13 +113,15 @@ export function ResultsClient({ request }: ResultsClientProps) {
   if (viewState === "error") {
     return (
       <div className="space-y-3" aria-live="polite">
-        <p className="text-base font-medium text-stone-950">Search failed.</p>
-        <p className="text-sm text-stone-700">{errorMessage}</p>
+        <p className="text-base font-medium text-slate-950">
+          We couldn&apos;t complete this search.
+        </p>
+        <p className="text-sm text-slate-600">Please try again.</p>
         <div className="flex gap-4 text-sm">
           <button
             type="button"
             onClick={() => setRetryToken((current) => current + 1)}
-            className="rounded-md border border-stone-300 px-3 py-2 text-stone-900"
+            className="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 outline-none hover:border-slate-400 focus-visible:ring-2 focus-visible:ring-blue-700"
           >
             Try again
           </button>
@@ -137,18 +140,62 @@ export function ResultsClient({ request }: ResultsClientProps) {
   if (viewState === "empty") {
     return (
       <div className="space-y-2">
-        <p className="text-base font-medium text-stone-950">No routes found.</p>
-        <p className="text-sm text-stone-700">Try different dates.</p>
+        <p className="text-base font-medium text-slate-950">
+          No routes found for these dates.
+        </p>
+        <p className="text-sm text-slate-600">
+          Try another departure date or a different airport.
+        </p>
       </div>
     );
   }
 
+  const { directOptions, adventures } = partitionItineraries(itineraries ?? []);
+  const directBaseline = directOptions[0]?.itinerary;
+
   return (
-    <div className="space-y-4">
-      {(itineraries ?? []).map((itinerary, index) => (
-        <ItineraryCard key={itinerary.id} itinerary={itinerary} rank={index + 1} />
-      ))}
-      <p className="text-sm text-stone-600">Indicative fares only.</p>
+    <div className="space-y-10">
+      {directOptions.length > 0 ? (
+        <section aria-labelledby="direct-option-heading" className="space-y-4">
+          <h2 id="direct-option-heading" className="text-base font-semibold text-slate-950">
+            Direct option
+          </h2>
+          {directOptions.map(({ itinerary, rank }) => (
+            <DirectItineraryCard key={itinerary.id} itinerary={itinerary} rank={rank} />
+          ))}
+        </section>
+      ) : null}
+
+      {adventures.length > 0 ? (
+        <section aria-labelledby="stopover-adventures-heading" className="space-y-4">
+          <div>
+            <h2 id="stopover-adventures-heading" className="text-base font-semibold text-slate-950">
+              Stopover adventures
+            </h2>
+            <p className="mt-1 text-sm text-slate-600">
+              {adventures.length} {adventures.length === 1 ? "stopover route" : "stopover routes"} found
+            </p>
+          </div>
+          <div className="space-y-4">
+            {adventures.map(({ itinerary, rank }) => (
+              <ItineraryCard
+                key={itinerary.id}
+                itinerary={itinerary}
+                rank={rank}
+                directBaseline={directBaseline}
+              />
+            ))}
+          </div>
+        </section>
+      ) : null}
+
+      {directOptions.length > 0 && adventures.length === 0 ? (
+        <p className="text-sm text-slate-600">
+          No stopover routes met our current quality criteria for these dates.
+        </p>
+      ) : null}
+
+      <p className="text-sm text-slate-500">Indicative fares only.</p>
     </div>
   );
 }

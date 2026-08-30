@@ -42,7 +42,7 @@ export default async function ResultsPage({ searchParams }: ResultsPageProps) {
   if (!request) {
     return (
       <main className="min-h-svh bg-[#f7f8fa] px-4 py-10 text-slate-950 sm:px-6">
-        <div className="mx-auto flex w-full max-w-3xl flex-col gap-4">
+        <div className="mx-auto flex w-full max-w-5xl flex-col gap-4">
           <p className="text-xl font-semibold">Invalid search.</p>
           <Link href="/" className="text-sm text-blue-700 underline">
             New search
@@ -58,20 +58,32 @@ export default async function ResultsPage({ searchParams }: ResultsPageProps) {
 
   return (
     <main className="min-h-svh bg-[#f7f8fa] px-4 py-10 text-slate-950 sm:px-6">
-      <div className="mx-auto flex w-full max-w-3xl flex-col gap-6">
-        <header className="min-w-0 space-y-2">
-          <h1 className="break-words text-2xl font-semibold">
-            {origin ? `${origin.city} (${origin.iataCode})` : request.origin} → {" "}
-            {destination
-              ? `${destination.city} (${destination.iataCode})`
-              : request.destination}
-          </h1>
-          <p className="text-sm text-slate-600">
-            Departing {formatDateRangeCompact(request.earliestDeparture, departureDates.at(-1) ?? request.earliestDeparture)}
-          </p>
-          <Link href="/" className="text-sm text-blue-700 underline">
-            New search
+      <div className="mx-auto flex w-full max-w-5xl flex-col gap-8">
+        <header className="min-w-0 space-y-4">
+          <Link
+            href="/"
+            className="inline-flex text-lg font-semibold tracking-tight text-slate-950"
+          >
+            Slow Layover
           </Link>
+          <div className="space-y-2">
+            <h1 className="break-words text-2xl font-semibold">
+              {origin ? `${origin.city} (${origin.iataCode})` : request.origin} → {" "}
+              {destination
+                ? `${destination.city} (${destination.iataCode})`
+                : request.destination}
+            </h1>
+            <div className="flex flex-wrap items-center gap-x-2 text-sm text-slate-600">
+              <span>
+                Departing {formatDateRangeCompact(request.earliestDeparture, departureDates.at(-1) ?? request.earliestDeparture)}
+              </span>
+              <span aria-hidden="true">·</span>
+              <span>One-way</span>
+            </div>
+            <Link href="/" className="inline-flex text-sm text-blue-700 underline underline-offset-2">
+              New search
+            </Link>
+          </div>
         </header>
 
         <ResultsClient request={request} />
