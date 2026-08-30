@@ -57,7 +57,7 @@ export function SearchForm() {
         <span className="inline-block size-2 rounded-full bg-blue-700" aria-hidden="true" />
         One-way journey
       </div>
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4 xl:gap-5">
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(13rem,1fr)_minmax(10rem,auto)] lg:gap-5">
         <AirportAutocomplete
           id="origin"
           label="From"
@@ -67,7 +67,7 @@ export function SearchForm() {
             updateAirport("origin", airport);
           }}
           error={errors.origin}
-          placeholder="Brisbane or BNE"
+          placeholder="City or airport"
         />
         <AirportAutocomplete
           id="destination"
@@ -78,7 +78,7 @@ export function SearchForm() {
             updateAirport("destination", airport);
           }}
           error={errors.destination}
-          placeholder="Larnaca or LCA"
+          placeholder="City or airport"
         />
         <FlexibleDatePicker value={values.earliestDeparture} onChange={updateDate} error={errors.dates} />
         <button
@@ -86,7 +86,7 @@ export function SearchForm() {
           disabled={isSubmitting}
           className="inline-flex min-h-14 w-full items-center justify-center self-start rounded-lg bg-blue-700 px-5 text-base font-semibold text-white outline-none transition hover:bg-blue-800 focus-visible:ring-2 focus-visible:ring-blue-700 focus-visible:ring-offset-2 disabled:cursor-wait disabled:bg-blue-600 md:mt-8"
         >
-          {isSubmitting ? "Searching…" : "Find stopover routes"}
+          {isSubmitting ? "Searching…" : "Find routes"}
         </button>
       </div>
     </form>
