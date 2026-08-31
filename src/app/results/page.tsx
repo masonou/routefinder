@@ -15,7 +15,7 @@ type ResultsPageProps = {
 
 function readQueryValue(
   params: Record<string, string | string[] | undefined>,
-  key: string
+  key: string,
 ): string | null {
   const value = params[key];
   return typeof value === "string" ? value : null;
@@ -68,19 +68,27 @@ export default async function ResultsPage({ searchParams }: ResultsPageProps) {
           </Link>
           <div className="space-y-2">
             <h1 className="wrap-break-word text-2xl font-semibold">
-              {origin ? `${origin.city} (${origin.iataCode})` : request.origin} → {" "}
+              {origin ? `${origin.city} (${origin.iataCode})` : request.origin}{" "}
+              →{" "}
               {destination
                 ? `${destination.city} (${destination.iataCode})`
                 : request.destination}
             </h1>
             <div className="flex flex-wrap items-center gap-x-2 text-sm text-slate-600">
               <span>
-                Departing {formatDateRangeCompact(request.earliestDeparture, departureDates.at(-1) ?? request.earliestDeparture)}
+                Departing{" "}
+                {formatDateRangeCompact(
+                  request.earliestDeparture,
+                  departureDates.at(-1) ?? request.earliestDeparture,
+                )}
               </span>
               <span aria-hidden="true">·</span>
               <span>One-way</span>
             </div>
-            <Link href="/" className="inline-flex text-sm text-blue-700 underline underline-offset-2">
+            <Link
+              href="/"
+              className="inline-flex text-sm text-blue-700 underline underline-offset-2"
+            >
               New search
             </Link>
           </div>

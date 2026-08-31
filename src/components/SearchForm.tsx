@@ -27,12 +27,17 @@ function hasErrors(errors: SearchFormErrors): boolean {
 export function SearchForm() {
   const router = useRouter();
   const [originAirport, setOriginAirport] = useState<Airport | null>(null);
-  const [destinationAirport, setDestinationAirport] = useState<Airport | null>(null);
+  const [destinationAirport, setDestinationAirport] = useState<Airport | null>(
+    null,
+  );
   const [values, setValues] = useState<SearchFormValues>(INITIAL_VALUES);
   const [errors, setErrors] = useState<SearchFormErrors>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  function updateAirport(field: "origin" | "destination", airport: Airport | null) {
+  function updateAirport(
+    field: "origin" | "destination",
+    airport: Airport | null,
+  ) {
     setValues((current) => ({ ...current, [field]: airport?.iataCode ?? "" }));
   }
 
@@ -46,15 +51,25 @@ export function SearchForm() {
     setErrors(nextErrors);
     if (!hasErrors(nextErrors)) {
       setIsSubmitting(true);
-      trackSearchSubmitted({ origin: values.origin, destination: values.destination });
+      trackSearchSubmitted({
+        origin: values.origin,
+        destination: values.destination,
+      });
       router.push(buildResultsUrl(values));
     }
   }
 
   return (
-    <form className="w-full rounded-2xl border border-slate-100 bg-white p-5 shadow-md shadow-slate-900/6 sm:p-6" onSubmit={handleSubmit} noValidate>
+    <form
+      className="w-full rounded-2xl border border-slate-100 bg-white p-5 shadow-md shadow-slate-900/6 sm:p-6"
+      onSubmit={handleSubmit}
+      noValidate
+    >
       <div className="mb-4 flex items-center gap-2 text-sm font-semibold text-slate-700">
-        <span className="inline-block size-2 rounded-full bg-blue-700" aria-hidden="true" />
+        <span
+          className="inline-block size-2 rounded-full bg-blue-700"
+          aria-hidden="true"
+        />
         One-way journey
       </div>
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(13rem,1fr)_minmax(10rem,auto)] lg:gap-5">
@@ -80,7 +95,11 @@ export function SearchForm() {
           error={errors.destination}
           placeholder="City or airport"
         />
-        <FlexibleDatePicker value={values.earliestDeparture} onChange={updateDate} error={errors.dates} />
+        <FlexibleDatePicker
+          value={values.earliestDeparture}
+          onChange={updateDate}
+          error={errors.dates}
+        />
         <button
           type="submit"
           disabled={isSubmitting}
