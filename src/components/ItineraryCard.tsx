@@ -51,7 +51,10 @@ function RouteTimeline({ itinerary }: Pick<ItineraryCardProps, "itinerary">) {
           className="flex min-w-0 flex-1 items-start last:flex-none"
         >
           <div className="min-w-0 text-center">
-            <span className="mx-auto block size-2 rounded-full bg-blue-700" aria-hidden="true" />
+            <span
+              className="mx-auto block size-2 rounded-full bg-blue-700"
+              aria-hidden="true"
+            />
             <span
               className="mt-2 block truncate text-xs font-semibold tracking-wide text-slate-700"
               title={point.label}
@@ -60,7 +63,10 @@ function RouteTimeline({ itinerary }: Pick<ItineraryCardProps, "itinerary">) {
             </span>
           </div>
           {index < points.length - 1 ? (
-            <span className="mr-1 mt-1 h-px min-w-3 flex-1 bg-slate-300" aria-hidden="true" />
+            <span
+              className="mr-1 mt-1 h-px min-w-3 flex-1 bg-slate-300"
+              aria-hidden="true"
+            />
           ) : null}
         </li>
       ))}
@@ -73,7 +79,7 @@ export function DirectItineraryCard({
   rank,
 }: Omit<ItineraryCardProps, "directBaseline">) {
   return (
-    <article className="grid gap-6 rounded-xl border border-slate-200 bg-white p-5 shadow-sm shadow-slate-900/[0.03] sm:p-6 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
+    <article className="grid gap-6 rounded-xl border border-slate-200 bg-white p-5 shadow-sm shadow-slate-900/3 sm:p-6 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
       <div className="space-y-5">
         {itinerary.legs.map(({ flight }) => (
           <FlightLeg key={flight.id} leg={flight} />
@@ -81,10 +87,14 @@ export function DirectItineraryCard({
       </div>
       <div className="border-t border-slate-100 pt-5 lg:min-w-44 lg:border-l lg:border-t-0 lg:pl-6 lg:pt-0">
         <p className="text-2xl font-semibold tracking-tight text-slate-950">
-          {formatResultMoney(itinerary.totalPrice.amount, itinerary.totalPrice.currency)}
+          {formatResultMoney(
+            itinerary.totalPrice.amount,
+            itinerary.totalPrice.currency,
+          )}
         </p>
         <p className="mt-1 text-sm text-slate-600">
-          {formatDuration(itinerary.totalFlightDurationMinutes)} flying · {getConnectionSummary(itinerary)}
+          {formatDuration(itinerary.totalFlightDurationMinutes)} flying ·{" "}
+          {getConnectionSummary(itinerary)}
         </p>
         <div className="mt-4">
           <KiwiAffiliateLink itinerary={itinerary} rank={rank} />
@@ -103,7 +113,7 @@ export function ItineraryCard({
   const priceComparison = getDirectPriceComparison(itinerary, directBaseline);
 
   return (
-    <article className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm shadow-slate-900/[0.03] sm:p-6">
+    <article className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm shadow-slate-900/3 sm:p-6">
       <div className="grid gap-7 lg:grid-cols-[minmax(0,1fr)_12rem] lg:gap-8">
         <div className="min-w-0">
           <p className="text-xs font-semibold uppercase tracking-[0.14em] text-blue-700">
@@ -142,14 +152,22 @@ export function ItineraryCard({
 
         <div className="border-t border-slate-100 pt-5 lg:border-l lg:border-t-0 lg:pl-6 lg:pt-0">
           <p className="text-2xl font-semibold tracking-tight text-slate-950">
-            {formatResultMoney(itinerary.totalPrice.amount, itinerary.totalPrice.currency)} total
+            {formatResultMoney(
+              itinerary.totalPrice.amount,
+              itinerary.totalPrice.currency,
+            )}{" "}
+            total
           </p>
           <p className="mt-1 text-sm text-slate-600">
             {formatDuration(itinerary.totalFlightDurationMinutes)} flying
           </p>
-          <p className="text-sm text-slate-600">{getConnectionSummary(itinerary)}</p>
+          <p className="text-sm text-slate-600">
+            {getConnectionSummary(itinerary)}
+          </p>
           {priceComparison ? (
-            <p className="mt-3 text-sm font-medium text-slate-800">{priceComparison}</p>
+            <p className="mt-3 text-sm font-medium text-slate-800">
+              {priceComparison}
+            </p>
           ) : null}
           <div className="mt-5">
             <KiwiAffiliateLink itinerary={itinerary} rank={rank} />

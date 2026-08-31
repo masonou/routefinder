@@ -33,7 +33,6 @@ function offer(
       airlineName: "Test Air",
     }],
     indicativePrice: { amount: price, currency: "EUR" },
-    bookingReference: `opaque-${id}`,
   };
 }
 
@@ -102,7 +101,6 @@ test("builds a direct itinerary from the cheapest verified nonstop detailed offe
   assert.equal(itinerary?.legs.length, 1);
   assert.deepEqual(itinerary?.legs[0]?.stopoverAfter, undefined);
   assert.equal(itinerary?.legs[0]?.flight.id, "best-shorter");
-  assert.equal(itinerary?.legs[0]?.flight.bookingReference, "opaque-best-shorter");
   assert.deepEqual(itinerary?.totalPrice, { amount: 310, currency: "EUR" });
   assert.equal(itinerary?.totalFlightDurationMinutes, 620);
   assert.equal(itinerary?.totalStops, 0);

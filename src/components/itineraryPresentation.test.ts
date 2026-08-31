@@ -89,6 +89,14 @@ test("stopover metadata is the adventure hero while airline connections remain f
   assert.equal(getConnectionSummary(adventure), "1 connection");
 });
 
+test("stopover headlines fall back to airport metadata and then the IATA code", () => {
+  assert.equal(
+    getStopoverHeadline({ airportCode: "BKK", nights: 2 }),
+    "2 nights in Bangkok, Thailand",
+  );
+  assert.equal(getStopoverHeadline({ airportCode: "XYZ", nights: 1 }), "1 night in XYZ");
+});
+
 test("direct airfare comparisons use only matching-currency final itinerary totals", () => {
   const baseline = direct(600);
 

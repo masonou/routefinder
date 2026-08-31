@@ -7,7 +7,6 @@ import {
   formatDuration,
   formatFlightDate,
   formatFlightTime,
-  formatHubStayText,
 } from "./formatFlight.ts";
 
 test("flight timestamp formatting keeps the local airport date and time", () => {
@@ -48,9 +47,4 @@ test("flight timestamp formatting does not shift due to timezone", () => {
 test("duration formatting is compact and readable", () => {
   assert.equal(formatDuration(435), "7h 15m");
   assert.equal(formatDuration(360), "6h");
-});
-
-test("hub-night wording uses the supplied city with singular and plural correctly", () => {
-  assert.equal(formatHubStayText(1, "Istanbul"), "1 night in Istanbul");
-  assert.equal(formatHubStayText(4, "Bangkok"), "4 nights in Bangkok");
 });

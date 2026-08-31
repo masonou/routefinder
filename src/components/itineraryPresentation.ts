@@ -6,7 +6,24 @@ import {
   type Itinerary,
   type ItineraryStopover,
 } from "../types/itinerary.ts";
-import { getStopoverLocation } from "./itineraryDisplay.ts";
+
+function nonEmptyText(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed || undefined;
+}
+
+function getStopoverLocation(stopover: Itinerary["legs"][number]["stopoverAfter"]): string {
+  if (!stopover) return "";
+
+  const candidateCity = nonEmptyText(stopover.city);
+  if (candidateCity) {
+    const candidateCountry = nonEmptyText(stopover.country);
+    return candidateCountry ? `${candidateCity}, ${candidateCountry}` : candidateCity;
+  }
+
+  const airport = findAirportByCode(stopover.airportCode);
+  return airport ? `${airport.city}, ${airport.country}` : stopover.airportCode.trim().toUpperCase();
+}
 
 function formatAirportLabel(airportCode: string): string {
   return findAirportByCode(airportCode)?.city ?? airportCode;

@@ -4,39 +4,22 @@ import {
   getSearchCacheResponseHeaders,
   runCachedSearch,
 } from "../cache/searchCache.ts";
-import { planTrip } from "../planner/planTrip.ts";
-import {
-  isDynamicHubDiscoveryEnabled,
-  searchDynamicRoutes,
-} from "../planner/searchDynamicRoutes.ts";
-import {
-  normalizeSearchApiError,
-  searchApiFlightProvider,
-} from "../providers/searchApi.ts";
+import { searchDynamicRoutes } from "../planner/searchDynamicRoutes.ts";
+import { normalizeSearchApiError } from "../providers/searchApi.ts";
 import {
   SearchValidationError,
   toTripRequest,
   validateSearchApiBody,
 } from "../utils/searchValidation.ts";
 import type { SearchCache } from "../cache/searchCache.ts";
-import type { FlightProvider } from "../providers/types.ts";
 import type { Itinerary } from "../../types/itinerary.ts";
 import type { TripRequest } from "../../types/trip.ts";
-
-type PlannerFunction = (
-  request: TripRequest,
-  provider: FlightProvider
-) => Promise<Itinerary[]>;
 
 type DynamicSearchFunction = (request: TripRequest) => Promise<Itinerary[]>;
 
 export interface SearchRequestDependencies {
   cache?: SearchCache | null;
-  provider?: FlightProvider;
-  planTrip?: PlannerFunction;
   searchDynamicRoutes?: DynamicSearchFunction;
-  dynamicHubDiscoveryEnabled?: boolean;
-  environment?: Record<string, string | undefined>;
 }
 
 export type SearchRequestResult =
@@ -63,22 +46,13 @@ export async function runSearchRequest(
     const searchRequest = validateSearchApiBody(body);
     const tripRequest = toTripRequest(searchRequest);
     const cache = dependencies.cache === undefined ? getSearchCache() : dependencies.cache;
-    const dynamicHubDiscoveryEnabled =
-      dependencies.dynamicHubDiscoveryEnabled ??
-      isDynamicHubDiscoveryEnabled(dependencies.environment);
     const searchResult = await runCachedSearch({
-      key: buildSearchCacheKey(
-        searchRequest,
-        dynamicHubDiscoveryEnabled ? "dynamic" : "legacy",
-      ),
+      key: buildSearchCacheKey(searchRequest),
       cache,
       async load() {
-        const itineraries = dynamicHubDiscoveryEnabled
-          ? await (dependencies.searchDynamicRoutes ?? searchDynamicRoutes)(tripRequest)
-          : await (dependencies.planTrip ?? planTrip)(
-              tripRequest,
-              dependencies.provider ?? searchApiFlightProvider,
-            );
+        const itineraries = await (dependencies.searchDynamicRoutes ?? searchDynamicRoutes)(
+          tripRequest,
+        );
         return { count: itineraries.length, itineraries };
       },
     });

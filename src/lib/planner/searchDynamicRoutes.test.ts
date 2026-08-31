@@ -80,7 +80,6 @@ function offer(
       },
     ],
     indicativePrice: { amount: price, currency: "EUR" },
-    bookingReference: `opaque-${id}`,
   };
 }
 
@@ -162,7 +161,7 @@ test("dynamic itinerary mapping preserves traveler-facing Explore metadata", () 
   }
 });
 
-test("dynamic orchestration maps verified routes into generic itineraries and keeps booking references", async () => {
+test("dynamic orchestration maps verified routes into generic itineraries", async () => {
   let exploreCalls = 0;
   let calendarCalls = 0;
   let detailedCalls = 0;
@@ -232,14 +231,10 @@ test("dynamic orchestration maps verified routes into generic itineraries and ke
     assert.equal(itinerary.totalFlightDurationMinutes, 720);
     assert.equal(itinerary.totalStops, 0);
     assert.match(itinerary.id, /^LCA__DPS__/);
-    assert.ok(itinerary.legs[0]?.flight.bookingReference);
-    assert.ok(itinerary.legs[1]?.flight.bookingReference);
-    assert.doesNotMatch(itinerary.id, /opaque-/);
   }
   const direct = itineraries[0];
   assert.equal(direct?.legs.length, 1);
   assert.equal(direct?.legs[0]?.stopoverAfter, undefined);
-  assert.equal(direct?.legs[0]?.flight.bookingReference, "opaque-first-DPS");
   assert.equal(direct?.totalStops, 0);
 });
 

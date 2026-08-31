@@ -1,10 +1,7 @@
 import {
-  MAX_HUB_STAY_NIGHTS,
   MAX_LEG_DURATION_MINUTES,
   MAX_STOPS_PER_LEG,
-  MIN_HUB_STAY_NIGHTS,
 } from "../constants/planner.ts";
-import { addCalendarDays } from "../utils/dateWindow.ts";
 import type { FlightOffer } from "../../types/flight.ts";
 import type { DateWindow } from "../../types/trip.ts";
 
@@ -70,22 +67,6 @@ export function isFlightWithinDepartureWindow(
   return (
     compareIsoDates(departureDate, window.start) >= 0 &&
     compareIsoDates(departureDate, window.end) <= 0
-  );
-}
-
-export function isArrivalWithinWindow(flight: FlightOffer, window: DateWindow): boolean {
-  if (!isValidDateWindow(window)) {
-    return false;
-  }
-
-  const arrivalDate = getUtcDatePart(flight.arrivalAt);
-  if (!arrivalDate) {
-    return false;
-  }
-
-  return (
-    compareIsoDates(arrivalDate, window.start) >= 0 &&
-    compareIsoDates(arrivalDate, window.end) <= 0
   );
 }
 
@@ -164,73 +145,4 @@ export function calculateHubStayNights(firstLeg: FlightOffer, secondLeg: FlightO
   );
 
   return calendarDayDifference > 0 ? calendarDayDifference : -1;
-}
-
-export function isCompatibleConnection(
-  firstLeg: FlightOffer,
-  secondLeg: FlightOffer,
-  hub: string,
-  arrivalWindow?: DateWindow
-): boolean {
-  if (!isReasonableFlight(firstLeg) || !isReasonableFlight(secondLeg)) {
-    return false;
-  }
-
-  if (firstLeg.destination !== hub || secondLeg.origin !== hub) {
-    return false;
-  }
-
-  if (firstLeg.indicativePrice.currency !== secondLeg.indicativePrice.currency) {
-    return false;
-  }
-
-  const firstArrival = parseIsoDateTime(firstLeg.arrivalAt);
-  const secondDeparture = parseIsoDateTime(secondLeg.departureAt);
-  if (!firstArrival || !secondDeparture || secondDeparture.getTime() <= firstArrival.getTime()) {
-    return false;
-  }
-
-  const hubStayNights = calculateHubStayNights(firstLeg, secondLeg);
-  if (
-    hubStayNights < MIN_HUB_STAY_NIGHTS ||
-    hubStayNights > MAX_HUB_STAY_NIGHTS
-  ) {
-    return false;
-  }
-
-  return !arrivalWindow || isArrivalWithinWindow(secondLeg, arrivalWindow);
-}
-
-export function deriveSecondLegDepartureWindow(
-  firstLegOffers: FlightOffer[],
-  arrivalWindow?: DateWindow
-): DateWindow | null {
-  const arrivalDates = firstLegOffers
-    .filter((offer) => isReasonableFlight(offer))
-    .map((offer) => getUtcDatePart(offer.arrivalAt))
-    .filter((date): date is string => date !== null)
-    .sort((left, right) => compareIsoDates(left, right));
-
-  if (arrivalDates.length === 0) {
-    return null;
-  }
-
-  const start = addCalendarDays(arrivalDates[0], MIN_HUB_STAY_NIGHTS);
-  const end = addCalendarDays(
-    arrivalDates[arrivalDates.length - 1],
-    MAX_HUB_STAY_NIGHTS
-  );
-  const cappedEnd =
-    arrivalWindow && compareIsoDates(end, arrivalWindow.end) > 0
-      ? arrivalWindow.end
-      : end;
-
-  if (compareIsoDates(start, cappedEnd) > 0) {
-    return null;
-  }
-
-  return {
-    start,
-    end: cappedEnd,
-  };
 }

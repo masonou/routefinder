@@ -9,7 +9,5 @@ export interface TripRequest {
   destination: string;
   // Controls when the first flight is allowed to depart.
   departureWindow: DateWindow;
-  // Optional final-arrival deadline retained for development routes and older callers.
-  arrivalWindow?: DateWindow;
   adults?: number;
 }

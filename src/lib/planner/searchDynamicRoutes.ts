@@ -295,9 +295,3 @@ export async function searchDynamicRoutes(
   const directItinerary = await directItineraryPromise;
   return appendDirectBaseline(adventures, directItinerary);
 }
-
-export function isDynamicHubDiscoveryEnabled(
-  environment: Record<string, string | undefined> = process.env,
-): boolean {
-  return environment.DYNAMIC_HUB_DISCOVERY_ENABLED?.trim().toLowerCase() === "true";
-}

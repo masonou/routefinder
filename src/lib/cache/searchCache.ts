@@ -42,19 +42,14 @@ function isSearchCacheValue(value: unknown): value is SearchCacheValue {
   );
 }
 
-export type SearchPlannerMode = "dynamic" | "legacy";
-
-export function buildSearchCacheKey(
-  input: SearchCacheKeyInput,
-  plannerMode: SearchPlannerMode = "legacy",
-): string {
+export function buildSearchCacheKey(input: SearchCacheKeyInput): string {
   return [
     "routefinder:search:v9",
     input.origin.trim().toUpperCase(),
     input.destination.trim().toUpperCase(),
     input.earliestDeparture,
     String(Math.trunc(input.adults)),
-    plannerMode,
+    "dynamic",
   ].join(":");
 }
 

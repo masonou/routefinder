@@ -1,5 +1,4 @@
 import type { FlightOffer } from "../../types/flight.ts";
-import type { BookingOption } from "../../types/booking.ts";
 import type { DateWindow } from "../../types/trip.ts";
 
 export interface FlightSearchInput {
@@ -58,16 +57,4 @@ export interface FlightCalendarDay {
 
 export interface FlightCalendarProvider {
   getFlightCalendar(input: FlightCalendarInput): Promise<FlightCalendarDay[]>;
-}
-
-export interface BookingOptionsInput {
-  bookingReference: string;
-  origin: string;
-  destination: string;
-  departureDate: string;
-  adults: number;
-}
-
-export interface BookingOptionsProvider {
-  getBookingOptions(input: BookingOptionsInput): Promise<BookingOption[]>;
 }

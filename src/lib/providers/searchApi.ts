@@ -1,10 +1,7 @@
 import { enumerateDateWindow } from "../utils/dateWindow.ts";
 import type { FlightOffer, FlightSegment } from "../../types/flight.ts";
-import type { BookingOption } from "../../types/booking.ts";
 
 import type {
-  BookingOptionsInput,
-  BookingOptionsProvider,
   DirectDestination,
   DirectDestinationsInput,
   DirectDestinationsProvider,
@@ -118,20 +115,6 @@ function isIsoDate(value: string): boolean {
 
   const parsed = new Date(`${value}T00:00:00.000Z`);
   return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
-}
-
-function getStringArray(
-  record: RecordValue,
-  key: string,
-): string[] | undefined {
-  const value = record[key];
-  if (!Array.isArray(value)) {
-    return undefined;
-  }
-
-  return value.filter(
-    (item): item is string => typeof item === "string" && Boolean(item.trim()),
-  );
 }
 
 function redactSensitiveDetails(message: string): string {
@@ -360,46 +343,11 @@ function mapSearchApiOffer(value: unknown): FlightOffer | null {
       amount: price,
       currency: "EUR",
     },
-    bookingReference: getNonEmptyString(value, "booking_token"),
   };
 
   return {
     id: `searchapi:${stableHash(offerSignature(normalizedOffer))}`,
     ...normalizedOffer,
-  };
-}
-
-function mapSearchApiBookingOption(value: unknown): BookingOption | null {
-  if (!isRecord(value)) {
-    return null;
-  }
-
-  const isSplitBooking = value.is_split_booking === true;
-  const sellerName =
-    getNonEmptyString(value, "book_with") ??
-    (isSplitBooking ? "Split booking" : undefined);
-  const amount = getNonNegativeNumber(value, "price");
-  if (!sellerName || amount === undefined) {
-    return null;
-  }
-
-  const baggagePrices = getStringArray(value, "baggage_prices");
-
-  // SearchAPI booking_request represents the Google Flights booking action.
-  // Slow Layover does not use it yet because affiliate-link strategy has not
-  // been decided.
-  return {
-    sellerName,
-    price: { amount, currency: "EUR" },
-    flightNumbers: getStringArray(value, "flight_numbers") ?? [],
-    ...(getNonEmptyString(value, "fare_type")
-      ? { fareType: getNonEmptyString(value, "fare_type") }
-      : {}),
-    ...(getNonEmptyString(value, "option_title")
-      ? { optionTitle: getNonEmptyString(value, "option_title") }
-      : {}),
-    ...(baggagePrices ? { baggagePrices } : {}),
-    ...(isSplitBooking ? { isSplitBooking: true } : {}),
   };
 }
 
@@ -797,90 +745,9 @@ async function searchExactDate(
   );
 }
 
-async function fetchBookingOptions(
-  input: BookingOptionsInput,
-  options: Required<
-    Pick<
-      SearchApiFlightProviderOptions,
-      "apiKey" | "fetch" | "endpoint" | "timeoutMs"
-    >
-  >,
-): Promise<BookingOption[]> {
-  const query = new URLSearchParams({
-    engine: "google_flights",
-    flight_type: "one_way",
-    departure_id: input.origin,
-    arrival_id: input.destination,
-    outbound_date: input.departureDate,
-    booking_token: input.bookingReference,
-    adults: String(input.adults),
-    currency: "EUR",
-  });
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), options.timeoutMs);
-
-  let response: Response;
-  try {
-    response = await options.fetch(`${options.endpoint}?${query.toString()}`, {
-      method: "GET",
-      headers: { Authorization: `Bearer ${options.apiKey}` },
-      signal: controller.signal,
-    });
-  } catch (error) {
-    if (isTimeoutError(error) || controller.signal.aborted) {
-      throw new SearchApiError("SearchAPI request timed out.", {
-        status: 504,
-        retryable: true,
-      });
-    }
-    throw new SearchApiError("SearchAPI network request failed.", {
-      retryable: true,
-    });
-  } finally {
-    clearTimeout(timeout);
-  }
-
-  if (!response.ok) {
-    const message =
-      response.status === 401 || response.status === 403
-        ? "SearchAPI authentication failed."
-        : response.status === 429
-          ? "SearchAPI rate limit exceeded."
-          : response.status >= 500
-            ? "SearchAPI service is unavailable."
-            : "SearchAPI request failed.";
-    throw new SearchApiError(message, {
-      status: response.status,
-      retryable: response.status === 429 || response.status >= 500,
-    });
-  }
-
-  let body: unknown;
-  try {
-    body = await response.json();
-  } catch {
-    throw new SearchApiError("SearchAPI returned invalid JSON.", {
-      status: 502,
-      retryable: false,
-    });
-  }
-
-  if (!isRecord(body) || !Array.isArray(body.booking_options)) {
-    throw new SearchApiError("SearchAPI returned an unexpected response.", {
-      status: 502,
-      retryable: false,
-    });
-  }
-
-  return body.booking_options
-    .map((option) => mapSearchApiBookingOption(option))
-    .filter((option): option is BookingOption => option !== null);
-}
-
 export class SearchApiFlightProvider
   implements
     FlightProvider,
-    BookingOptionsProvider,
     DirectDestinationsProvider,
     FlightCalendarProvider
 {
@@ -909,18 +776,6 @@ export class SearchApiFlightProvider
     }
 
     return deduplicateOffersById(offers);
-  }
-
-  async getBookingOptions(
-    input: BookingOptionsInput,
-  ): Promise<BookingOption[]> {
-    const apiKey = this.options.apiKey?.trim() || getSearchApiApiKey();
-    return fetchBookingOptions(input, {
-      apiKey,
-      fetch: this.options.fetch ?? globalThis.fetch,
-      endpoint: this.options.endpoint ?? SEARCH_API_URL,
-      timeoutMs: this.options.timeoutMs ?? SEARCH_API_TIMEOUT_MS,
-    });
   }
 
   async getDirectDestinations(
@@ -957,9 +812,6 @@ export function createSearchApiFlightProvider(
 const defaultSearchApiProvider = createSearchApiFlightProvider();
 
 export const searchApiFlightProvider: FlightProvider = defaultSearchApiProvider;
-
-export const searchApiBookingOptionsProvider: BookingOptionsProvider =
-  defaultSearchApiProvider;
 
 export const searchApiDirectDestinationsProvider: DirectDestinationsProvider =
   defaultSearchApiProvider;

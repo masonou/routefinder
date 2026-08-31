@@ -1,44 +1,20 @@
-## Slow Layover
+# Slow Layover
 
-Slow Layover finds one-way itineraries with a 2–6 night stopover. Its request flow is:
+Slow Layover finds one-way journeys with intentional 2–6 night stopovers.
 
 ```text
-frontend → POST /api/search → Redis cache → dynamic planner → SearchAPI.io Google Flights
+Homepage → POST /api/search → Redis cache → dynamic route discovery → SearchAPI.io
 ```
 
-The planner and domain types remain provider-neutral. Dynamic discovery uses Travel Explore for the selected earliest departure date, validates a 2–6 night Calendar window, then verifies detailed flight offers. It intentionally does not run Explore across the full D through D+3 window yet, keeping the cold-search request budget bounded. The old Bangkok (`BKK`) planner remains available only as a temporary server-side rollback mode.
-
-## Dynamic Hub Discovery V2
-
-The dynamic discovery pipeline:
-
-1. finds nonstop destinations with Travel Explore;
-2. ranks geographically sensible hub candidates;
-3. validates onward flights in the 2–6 night Calendar window; and
-4. verifies the top three hubs using detailed Google Flights offers.
-
-Set `DYNAMIC_HUB_DISCOVERY_ENABLED=true` to enable it in production search. With the flag set to `false` (the default), the legacy BKK planner retains its existing D through D+3 first-leg window.
-
-```bash
-npm run hubs:debug -- LCA DPS 2026-09-01
-```
-
-The script loads `SEARCHAPI_API_KEY` from `.env.local` when present and prints
-only normalized candidate and Calendar-validation fields.
+Dynamic discovery finds direct destinations for the selected departure date, ranks sensible stopover candidates, validates onward dates, verifies flight offers, and compares a direct baseline. The planner and domain types are provider-neutral.
 
 ## Development
 
 ```bash
 npm run dev
+npm test
+npm run lint
 ```
-
-## Airport metadata
-
-Autocomplete, public airport validation, display names, and route geography use a
-generated global passenger-airport catalogue from [OurAirports](https://ourairports.com/data/).
-Regenerate it with `npm run airports:generate`; the app never downloads airport
-metadata at runtime. Flight availability and actual routes still come from
-SearchAPI.io / Google Flights.
 
 Open [http://localhost:3000](http://localhost:3000).
 
@@ -48,21 +24,25 @@ Required environment variable:
 SEARCHAPI_API_KEY=
 ```
 
-Redis caching is optional locally and uses:
+Redis caching is optional locally:
 
 ```env
 UPSTASH_REDIS_REST_URL=
 UPSTASH_REDIS_REST_TOKEN=
 ```
 
-## Search caching
+## Airport metadata
 
-Public searches are cached in Redis for five minutes; empty results use a one-minute TTL. Booking-option lookups are cached for five minutes using a hash of the provider booking reference. Cache failures fall back to a live provider request. Configure production rate limiting for both `/api/search` and `/api/booking-options` at the Vercel WAF level; each booking-options cache miss creates a SearchAPI request.
+Autocomplete, public airport validation, display names, and route geography use a generated global passenger-airport catalogue from [OurAirports](https://ourairports.com/data/). Regenerate it with `npm run airports:generate`; airport metadata is never downloaded at runtime.
 
-## Product analytics
+## Debugging dynamic hub discovery
 
-PostHog tracks the core funnel with five custom events: `search_submitted` for valid route searches, `results_found` and `no_results` for successful search outcomes, `search_failed` for technical failures, and `affiliate_click` for Kiwi outbound clicks. Search events include only airport codes (never the departure date); affiliate clicks include the displayed itinerary rank and fare context.
+```bash
+npm run hubs:debug -- LCA DPS 2026-09-01
+```
 
-## Deployment
+The script loads `SEARCHAPI_API_KEY` from `.env.local` when available and prints normalized candidate and Calendar-validation fields only.
 
-Deploy as a standard Next.js application on Vercel and configure the environment variables above.
+## Caching and analytics
+
+Search results are cached in Redis for five minutes; empty results use a one-minute TTL. Cache failures fall back to a live provider request. PostHog records `search_submitted`, `results_found`, `no_results`, `search_failed`, and `affiliate_click` without sending departure dates.
