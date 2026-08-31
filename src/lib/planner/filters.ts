@@ -105,20 +105,22 @@ export function isReasonableFlight(flight: FlightOffer): boolean {
       return false;
     }
 
-    const segmentDeparture = parseIsoDateTime(segment.departureAt);
-    const segmentArrival = parseIsoDateTime(segment.arrivalAt);
-    if (!segmentDeparture || !segmentArrival || segmentArrival <= segmentDeparture) {
+    // SearchAPI timestamps are airport-local display values. Segment endpoints
+    // can be in different timezones, so their naive Date values cannot safely
+    // establish elapsed chronology. Provider durationMinutes is authoritative.
+    if (
+      !parseIsoDateTime(segment.departureAt) ||
+      !parseIsoDateTime(segment.arrivalAt)
+    ) {
       return false;
     }
   }
 
-  const departure = parseIsoDateTime(flight.departureAt);
-  const arrival = parseIsoDateTime(flight.arrivalAt);
-  if (!departure || !arrival) {
+  if (!parseIsoDateTime(flight.departureAt) || !parseIsoDateTime(flight.arrivalAt)) {
     return false;
   }
 
-  return arrival.getTime() > departure.getTime();
+  return true;
 }
 
 export function calculateHubStayNights(firstLeg: FlightOffer, secondLeg: FlightOffer): number {

@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   deduplicateHubCandidateVariants,
+  calculateHubCandidateScoreBreakdown,
   generateHubCandidates,
   selectCalendarCandidateVariants,
 } from "./hubCandidates.ts";
@@ -63,6 +64,15 @@ test("filters candidates above the configured detour threshold", async () => {
   );
 
   assert.deepEqual(candidates.map((candidate) => candidate.airportCode), ["DXB"]);
+});
+
+test("exposes the exact geography-first Stage 1 score components for diagnostics", () => {
+  assert.deepEqual(calculateHubCandidateScoreBreakdown(1.2, 720, 250), {
+    geography: 400,
+    duration: 5,
+    price: 7.5,
+    total: 412.5,
+  });
 });
 
 test("ranks lower-detour hubs above extreme detours and removes endpoints", async () => {

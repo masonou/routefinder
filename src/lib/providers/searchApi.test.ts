@@ -175,6 +175,27 @@ test("uses one exact-date request for every date in a flexible window", async ()
   assert.deepEqual(requestedDates, ["2026-08-17", "2026-08-18", "2026-08-19"]);
 });
 
+test("detailed diagnostics preserve the broad request and parser rejection evidence", async () => {
+  let trace: Parameters<NonNullable<import("./searchApi.ts").SearchApiDiagnosticHooks["onDetailedTrace"]>>[0] | undefined;
+  const provider = createSearchApiFlightProvider({
+    apiKey: "searchapi_test_secret",
+    diagnostics: { onDetailedTrace: (entry) => { trace = entry; } },
+    fetch: async () => jsonResponse({
+      best_flights: [directFlight, { flights: [] }],
+      hidden_flights: [connectingFlight],
+    }),
+  });
+
+  await provider.searchOneWay(sampleInput);
+
+  assert.equal(trace?.request.stops, undefined);
+  assert.equal(trace?.rawGroupCounts.best_flights, 2);
+  assert.equal(trace?.rawGroupCounts.hidden_flights, 1);
+  assert.equal(trace?.rawFlightResults, 3);
+  assert.equal(trace?.mappedOffers.length, 2);
+  assert.equal(trace?.parserRejections.invalid_or_incomplete_segment, 1);
+});
+
 test("keeps the shared maximum flexible-search date protection", async () => {
   let fetchCalls = 0;
   const provider = createSearchApiFlightProvider({

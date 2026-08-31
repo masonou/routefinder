@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   calculateHubStayNights,
+  isReasonableFlight,
 } from "./filters.ts";
 import type { FlightOffer } from "../../types/flight";
 
@@ -98,4 +99,51 @@ test("calculateHubStayNights returns 2 for a two-night stay", () => {
   });
 
   assert.equal(calculateHubStayNights(firstLeg, secondLeg), 2);
+});
+
+test("accepts valid long-haul offers whose destination-local arrival clock is earlier", () => {
+  const cases: Array<Partial<FlightOffer>> = [
+    {
+      origin: "SYD", destination: "SCL", departureAt: "2026-09-19T11:45:00",
+      arrivalAt: "2026-09-19T11:30:00", durationMinutes: 765,
+    },
+    {
+      origin: "AKL", destination: "SCL", departureAt: "2026-09-20T19:10:00",
+      arrivalAt: "2026-09-20T15:25:00", durationMinutes: 675,
+    },
+    {
+      origin: "MEL", destination: "SCL", departureAt: "2026-09-20T12:00:00",
+      arrivalAt: "2026-09-20T11:35:00", durationMinutes: 755,
+    },
+  ];
+
+  for (const entry of cases) {
+    const flight = createFlightOffer({
+      ...entry,
+      segments: [{
+        origin: entry.origin as string,
+        destination: entry.destination as string,
+        departureAt: entry.departureAt as string,
+        arrivalAt: entry.arrivalAt as string,
+        airlineName: "Test Air",
+      }],
+    });
+    assert.equal(isReasonableFlight(flight), true, `${entry.origin} → ${entry.destination}`);
+  }
+});
+
+test("keeps local timestamp, duration, and structural sanity checks", () => {
+  assert.equal(isReasonableFlight(createFlightOffer({})), true);
+  assert.equal(isReasonableFlight(createFlightOffer({ durationMinutes: 0 })), false);
+  assert.equal(isReasonableFlight(createFlightOffer({ durationMinutes: -1 })), false);
+  assert.equal(isReasonableFlight(createFlightOffer({ durationMinutes: 60 * 60 + 1 })), false);
+  assert.equal(isReasonableFlight(createFlightOffer({ departureAt: "" })), false);
+  assert.equal(isReasonableFlight(createFlightOffer({ arrivalAt: "" })), false);
+  assert.equal(isReasonableFlight(createFlightOffer({ departureAt: "not-a-timestamp" })), false);
+  assert.equal(isReasonableFlight(createFlightOffer({ arrivalAt: "not-a-timestamp" })), false);
+  assert.equal(isReasonableFlight(createFlightOffer({
+    segments: [{
+      origin: "AAA", destination: "BBB", departureAt: "", arrivalAt: "2026-09-09T12:00:00", airlineName: "Test Air",
+    }],
+  })), false);
 });

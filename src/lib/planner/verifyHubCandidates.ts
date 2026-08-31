@@ -81,6 +81,17 @@ export interface VerifyHubCandidatesInput {
 export interface VerifyHubCandidatesOptions {
   cache?: FlightOffersCache | null;
   warn?: (message: string) => void;
+  onDetailedOffers?: (trace: DetailedOfferTrace) => void;
+}
+
+export interface DetailedOfferTrace {
+  airportCode: string;
+  leg: "first" | "second";
+  origin: string;
+  destination: string;
+  departureDate: string;
+  offers: FlightOffer[];
+  cacheStatus: "HIT" | "MISS";
 }
 
 export interface VerifyHubCandidatesResult {
@@ -437,6 +448,15 @@ export async function verifyHubCandidates(
                 adults,
               }),
             warn,
+          });
+          options.onDetailedOffers?.({
+            airportCode: hub.airportCode,
+            leg,
+            origin: legOrigin,
+            destination: legDestination,
+            departureDate,
+            offers: result.value,
+            cacheStatus: result.cacheStatus,
           });
           return { ...result, leg };
         };

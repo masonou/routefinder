@@ -35,7 +35,37 @@ export type SearchApiFlightProviderOptions = {
   fetch?: FetchFunction;
   endpoint?: string;
   timeoutMs?: number;
+  diagnostics?: SearchApiDiagnosticHooks;
 };
+
+export interface SearchApiCalendarTrace {
+  request: Record<string, string>;
+  rawCalendarEntries: number;
+  mappedCalendarDays: FlightCalendarDay[];
+  calendarEntriesContainStopMetadata: boolean;
+}
+
+export interface SearchApiDetailedTrace {
+  request: Record<string, string>;
+  rawGroupCounts: Record<string, number>;
+  rawFlightResults: number;
+  mappedOffers: FlightOffer[];
+  parserRejections: Record<string, number>;
+}
+
+// Optional and used only by the debug command. These hooks observe the same
+// provider responses; they never alter a request, parser decision, or result.
+export interface SearchApiDiagnosticHooks {
+  onCalendarTrace?: (trace: SearchApiCalendarTrace) => void;
+  onDetailedTrace?: (trace: SearchApiDetailedTrace) => void;
+}
+
+type ResolvedSearchApiOptions = Required<
+  Pick<
+    SearchApiFlightProviderOptions,
+    "apiKey" | "fetch" | "endpoint" | "timeoutMs"
+  >
+> & Pick<SearchApiFlightProviderOptions, "diagnostics">;
 
 class SearchApiError extends Error {
   readonly status?: number;
@@ -310,24 +340,34 @@ function stableHash(value: string): string {
   return (hash >>> 0).toString(36);
 }
 
-function mapSearchApiOffer(value: unknown): FlightOffer | null {
+type SearchApiOfferParseResult =
+  | { offer: FlightOffer; rejection?: never }
+  | { offer?: never; rejection: string };
+
+function parseSearchApiOffer(value: unknown): SearchApiOfferParseResult {
   if (!isRecord(value) || !Array.isArray(value.flights)) {
-    return null;
+    return { rejection: "missing_flights" };
   }
 
   const segments = value.flights
     .map((flight) => mapSearchApiSegment(flight))
     .filter((segment): segment is FlightSegment => segment !== null);
   if (segments.length === 0 || segments.length !== value.flights.length) {
-    return null;
+    return { rejection: "invalid_or_incomplete_segment" };
   }
 
   const firstSegment = segments[0];
   const lastSegment = segments[segments.length - 1];
   const durationMinutes = getPositiveNumber(value, "total_duration");
   const price = getPositiveNumber(value, "price");
-  if (!firstSegment || !lastSegment || !durationMinutes || !price) {
-    return null;
+  if (!firstSegment || !lastSegment) {
+    return { rejection: "missing_route" };
+  }
+  if (!durationMinutes) {
+    return { rejection: "missing_or_invalid_duration" };
+  }
+  if (!price) {
+    return { rejection: "missing_or_invalid_price" };
   }
 
   const normalizedOffer: Omit<FlightOffer, "id"> = {
@@ -346,13 +386,15 @@ function mapSearchApiOffer(value: unknown): FlightOffer | null {
   };
 
   return {
-    id: `searchapi:${stableHash(offerSignature(normalizedOffer))}`,
-    ...normalizedOffer,
+    offer: {
+      id: `searchapi:${stableHash(offerSignature(normalizedOffer))}`,
+      ...normalizedOffer,
+    },
   };
 }
 
-function getFlightGroups(response: RecordValue): unknown[] {
-  const groups: unknown[] = [];
+function getFlightGroups(response: RecordValue): Array<{ name: string; value: unknown }> {
+  const groups: Array<{ name: string; value: unknown }> = [];
 
   for (const [key, value] of Object.entries(response)) {
     if (!Array.isArray(value)) {
@@ -363,7 +405,7 @@ function getFlightGroups(response: RecordValue): unknown[] {
       (item) => isRecord(item) && Array.isArray(item.flights),
     );
     if (KNOWN_FLIGHT_RESULT_GROUPS.has(key) || containsFlightGroups) {
-      groups.push(...value);
+      groups.push(...value.map((entry) => ({ name: key, value: entry })));
     }
   }
 
@@ -565,16 +607,12 @@ function mapSearchApiCalendarDay(value: unknown): FlightCalendarDay | null {
   };
 }
 
-async function fetchFlightCalendar(
-  input: FlightCalendarInput,
-  options: Required<
-    Pick<
-      SearchApiFlightProviderOptions,
-      "apiKey" | "fetch" | "endpoint" | "timeoutMs"
-    >
-  >,
-): Promise<FlightCalendarDay[]> {
-  const query = new URLSearchParams({
+function queryRecord(query: URLSearchParams): Record<string, string> {
+  return Object.fromEntries(query.entries());
+}
+
+function buildFlightCalendarQuery(input: FlightCalendarInput): URLSearchParams {
+  return new URLSearchParams({
     engine: "google_flights_calendar",
     flight_type: "one_way",
     departure_id: input.origin.trim().toUpperCase(),
@@ -585,6 +623,30 @@ async function fetchFlightCalendar(
     stops: input.stopPolicy ?? "two_stops_or_fewer",
     currency: "EUR",
   });
+}
+
+function buildExactFlightQuery(
+  input: FlightSearchInput,
+  departureDate: string,
+): URLSearchParams {
+  return new URLSearchParams({
+    engine: "google_flights",
+    flight_type: "one_way",
+    departure_id: input.origin,
+    arrival_id: input.destination,
+    outbound_date: departureDate,
+    adults: String(input.adults),
+    travel_class: "economy",
+    currency: "EUR",
+    show_cheapest_flights: "true",
+  });
+}
+
+async function fetchFlightCalendar(
+  input: FlightCalendarInput,
+  options: ResolvedSearchApiOptions,
+): Promise<FlightCalendarDay[]> {
+  const query = buildFlightCalendarQuery(input);
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), options.timeoutMs);
 
@@ -641,32 +703,26 @@ async function fetchFlightCalendar(
     });
   }
 
-  return body.calendar
+  const mappedCalendarDays = body.calendar
     .map((entry) => mapSearchApiCalendarDay(entry))
     .filter((entry): entry is FlightCalendarDay => entry !== null);
+  options.diagnostics?.onCalendarTrace?.({
+    request: queryRecord(query),
+    rawCalendarEntries: body.calendar.length,
+    mappedCalendarDays,
+    calendarEntriesContainStopMetadata: body.calendar.some(
+      (entry) => isRecord(entry) && ("stops" in entry || "stop_count" in entry),
+    ),
+  });
+  return mappedCalendarDays;
 }
 
 async function searchExactDate(
   input: FlightSearchInput,
   departureDate: string,
-  options: Required<
-    Pick<
-      SearchApiFlightProviderOptions,
-      "apiKey" | "fetch" | "endpoint" | "timeoutMs"
-    >
-  >,
+  options: ResolvedSearchApiOptions,
 ): Promise<FlightOffer[]> {
-  const query = new URLSearchParams({
-    engine: "google_flights",
-    flight_type: "one_way",
-    departure_id: input.origin,
-    arrival_id: input.destination,
-    outbound_date: departureDate,
-    adults: String(input.adults),
-    travel_class: "economy",
-    currency: "EUR",
-    show_cheapest_flights: "true",
-  });
+  const query = buildExactFlightQuery(input, departureDate);
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), options.timeoutMs);
 
@@ -738,11 +794,25 @@ async function searchExactDate(
     });
   }
 
-  return deduplicateOffersById(
-    groups
-      .map((group) => mapSearchApiOffer(group))
-      .filter((offer): offer is FlightOffer => offer !== null),
-  );
+  const parserRejections: Record<string, number> = {};
+  const mappedOffers = groups.flatMap(({ value }) => {
+    const parsed = parseSearchApiOffer(value);
+    if (parsed.offer) return [parsed.offer];
+    parserRejections[parsed.rejection] = (parserRejections[parsed.rejection] ?? 0) + 1;
+    return [];
+  });
+  const offers = deduplicateOffersById(mappedOffers);
+  options.diagnostics?.onDetailedTrace?.({
+    request: queryRecord(query),
+    rawGroupCounts: groups.reduce<Record<string, number>>((counts, { name }) => {
+      counts[name] = (counts[name] ?? 0) + 1;
+      return counts;
+    }, {}),
+    rawFlightResults: groups.length,
+    mappedOffers: offers,
+    parserRejections,
+  });
+  return offers;
 }
 
 export class SearchApiFlightProvider
@@ -765,6 +835,7 @@ export class SearchApiFlightProvider
       fetch: this.options.fetch ?? globalThis.fetch,
       endpoint: this.options.endpoint ?? SEARCH_API_URL,
       timeoutMs: this.options.timeoutMs ?? SEARCH_API_TIMEOUT_MS,
+      diagnostics: this.options.diagnostics,
     };
     const departureDates = enumerateDateWindow(input.departureWindow);
     const offers: FlightOffer[] = [];
@@ -799,6 +870,7 @@ export class SearchApiFlightProvider
       fetch: this.options.fetch ?? globalThis.fetch,
       endpoint: this.options.endpoint ?? SEARCH_API_URL,
       timeoutMs: this.options.timeoutMs ?? SEARCH_API_TIMEOUT_MS,
+      diagnostics: this.options.diagnostics,
     });
   }
 }

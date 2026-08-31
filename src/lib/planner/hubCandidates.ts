@@ -47,11 +47,20 @@ function resolveAirportCoordinates(code: string): Coordinates {
   return { latitude: airport.latitude, longitude: airport.longitude };
 }
 
-function calculateCandidateScore(
+export interface HubCandidateScoreBreakdown {
+  geography: number;
+  duration: number;
+  price: number;
+  total: number;
+}
+
+// Exported for the diagnostic command. Candidate generation continues to use this
+// exact calculation, so diagnostics cannot drift from Stage 1 ranking.
+export function calculateHubCandidateScoreBreakdown(
   detourRatio: number,
   durationMinutes: number | undefined,
   price: number | undefined,
-): number {
+): HubCandidateScoreBreakdown {
   // Geography is the primary ranking signal: each 1% detour improvement is
   // worth 10 points. Known first-leg duration and price can contribute at most
   // 10 points each, so neither can outweigh a material geographic improvement.
@@ -65,7 +74,12 @@ function calculateCandidateScore(
       ? 0
       : Math.max(0, 1 - Math.min(price, 1_000) / 1_000) * 10;
 
-  return Number((detourScore + durationScore + priceScore).toFixed(3));
+  return {
+    geography: Number(detourScore.toFixed(3)),
+    duration: Number(durationScore.toFixed(3)),
+    price: Number(priceScore.toFixed(3)),
+    total: Number((detourScore + durationScore + priceScore).toFixed(3)),
+  };
 }
 
 function toHubCandidate(
@@ -104,11 +118,11 @@ function toHubCandidate(
     ...(directDestination.flightDurationMinutes === undefined
       ? {}
       : { firstLegDurationMinutes: directDestination.flightDurationMinutes }),
-    candidateScore: calculateCandidateScore(
+    candidateScore: calculateHubCandidateScoreBreakdown(
       detourRatio,
       directDestination.flightDurationMinutes,
       directDestination.indicativePrice,
-    ),
+    ).total,
   };
 }
 

@@ -51,7 +51,10 @@ export interface CalendarValidationFailure {
 
 export interface CalendarValidationLookup {
   airportCode: string;
+  firstLegDepartureDate: string;
+  onwardPolicy: OnwardFlightPolicy;
   cacheStatus: "HIT" | "MISS";
+  outcome: "viable" | "no_viable_dates";
 }
 
 export interface ValidateHubCandidatesResult {
@@ -90,6 +93,9 @@ interface CandidateValidationSuccess {
 interface CandidateValidationRejected {
   type: "rejected";
   airportCode: string;
+  firstLegDepartureDate: string;
+  onwardPolicy: OnwardFlightPolicy;
+  cacheStatus: "HIT" | "MISS";
 }
 
 interface CandidateValidationFailure {
@@ -318,7 +324,13 @@ export async function validateHubCandidates(
           result.value,
         );
         if (onwardOptions.length === 0) {
-          return { type: "rejected", airportCode: candidate.airportCode };
+          return {
+            type: "rejected",
+            airportCode: candidate.airportCode,
+            firstLegDepartureDate: candidate.firstLegDepartureDate,
+            onwardPolicy,
+            cacheStatus: result.cacheStatus,
+          };
         }
 
         return {
@@ -375,11 +387,29 @@ export async function validateHubCandidates(
         .filter((outcome): outcome is CandidateValidationFailure => outcome.type === "failure")
         .map(({ airportCode, message }) => [airportCode, { airportCode, message }] as const),
     ).values()],
+    // Keep lookup accounting for both viable and no-flight Calendar results.
+    // The production planner does not consume this field; it lets diagnostics
+    // separate live API calls from cached negative results.
     calendarLookups: outcomes
-      .filter((outcome): outcome is CandidateValidationSuccess => outcome.type === "success")
-      .map(({ candidate, cacheStatus }) => ({
-        airportCode: candidate.airportCode,
-        cacheStatus,
+      .filter(
+        (outcome): outcome is CandidateValidationSuccess | CandidateValidationRejected =>
+          outcome.type === "success" || outcome.type === "rejected",
+      )
+      .map((outcome) => ({
+        airportCode:
+          outcome.type === "success"
+            ? outcome.candidate.airportCode
+            : outcome.airportCode,
+        firstLegDepartureDate:
+          outcome.type === "success"
+            ? outcome.candidate.firstLegDepartureDate
+            : outcome.firstLegDepartureDate,
+        onwardPolicy:
+          outcome.type === "success"
+            ? outcome.candidate.onwardPolicy
+            : outcome.onwardPolicy,
+        cacheStatus: outcome.cacheStatus,
+        outcome: outcome.type === "success" ? "viable" : "no_viable_dates",
       })),
     nonstopCalendarChecks: calendarCandidates.length,
     fallbackCalendarChecks: fallbackCandidates.length,

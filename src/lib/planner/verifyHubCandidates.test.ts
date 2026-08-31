@@ -134,6 +134,40 @@ test("enforces a clean Calendar candidate's nonstop detailed onward policy", asy
   assert.match(result.rejected[0]?.reason ?? "", /nonstop detailed onward/);
 });
 
+test("keeps a clean long-haul nonstop whose destination-local arrival clock is earlier", async () => {
+  const secondLeg: FlightOffer = {
+    ...offer("syd-scl", "SYD", "SCL", "2026-09-19", 700, 765),
+    departureAt: "2026-09-19T11:45:00",
+    arrivalAt: "2026-09-19T11:30:00",
+    segments: [{
+      origin: "SYD",
+      destination: "SCL",
+      departureAt: "2026-09-19T11:45:00",
+      arrivalAt: "2026-09-19T11:30:00",
+      airlineName: "Test Air",
+    }],
+  };
+  const result = await verifyHubCandidates(
+    {
+      origin: "BNE",
+      destination: "SCL",
+      candidates: [hub("SYD", {
+        firstLegDepartureDate: "2026-09-15",
+        bestOnwardDate: "2026-09-19",
+        onwardPolicy: "nonstop",
+      })],
+    },
+    providerWith({
+      "BNE-SYD": [offer("first", "BNE", "SYD", "2026-09-15", 100, 120)],
+      "SYD-SCL": [secondLeg],
+    }),
+    { cache: null },
+  );
+
+  assert.equal(result.rejected.length, 0);
+  assert.equal(result.verifiedRoutes[0]?.secondLeg.id, "syd-scl");
+});
+
 test("keeps fallback connections but upgrades a fallback detailed nonstop offer to clean", async () => {
   const connecting = await verifyHubCandidates(
     { origin: "LCA", destination: "DPS", candidates: [hub("ATH")] },
