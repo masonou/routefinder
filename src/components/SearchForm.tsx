@@ -52,7 +52,7 @@ export function SearchForm() {
   }
 
   return (
-    <form className="w-full rounded-2xl border border-slate-100 bg-white p-5 shadow-md shadow-slate-900/[0.06] sm:p-6" onSubmit={handleSubmit} noValidate>
+    <form className="w-full rounded-2xl border border-slate-100 bg-white p-5 shadow-md shadow-slate-900/6 sm:p-6" onSubmit={handleSubmit} noValidate>
       <div className="mb-4 flex items-center gap-2 text-sm font-semibold text-slate-700">
         <span className="inline-block size-2 rounded-full bg-blue-700" aria-hidden="true" />
         One-way journey

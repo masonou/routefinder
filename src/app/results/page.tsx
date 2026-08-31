@@ -67,7 +67,7 @@ export default async function ResultsPage({ searchParams }: ResultsPageProps) {
             Slow Layover
           </Link>
           <div className="space-y-2">
-            <h1 className="break-words text-2xl font-semibold">
+            <h1 className="wrap-break-word text-2xl font-semibold">
               {origin ? `${origin.city} (${origin.iataCode})` : request.origin} → {" "}
               {destination
                 ? `${destination.city} (${destination.iataCode})`

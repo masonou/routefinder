@@ -17,7 +17,7 @@ interface SearchLoadingStateProps {
 function SkeletonItinerary() {
   return (
     <div
-      className="rounded-xl border border-slate-100 bg-white p-5 shadow-sm shadow-slate-900/[0.03]"
+      className="rounded-xl border border-slate-100 bg-white p-5 shadow-sm shadow-slate-900/3"
       aria-hidden="true"
     >
       <div className="space-y-4">
@@ -54,7 +54,7 @@ export function SearchLoadingState({
       aria-describedby="search-loading-announcement"
     >
       <div className="text-center">
-        <h2 className="break-words text-xl font-semibold tracking-tight text-slate-950 sm:text-2xl">
+        <h2 className="wrap-break-word text-xl font-semibold tracking-tight text-slate-950 sm:text-2xl">
           Finding routes worth taking
         </h2>
         <div
@@ -79,7 +79,10 @@ export function SearchLoadingState({
           </div>
           <span className="shrink-0">{destination}</span>
         </div>
-        <p className="mt-6 break-words text-sm text-slate-600" aria-live="off">
+        <p
+          className="mt-6 wrap-break-word text-sm text-slate-600"
+          aria-live="off"
+        >
           {SEARCH_LOADING_MESSAGES[statusIndex]}
         </p>
         <p
