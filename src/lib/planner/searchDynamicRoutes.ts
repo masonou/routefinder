@@ -11,6 +11,7 @@ import {
   searchApiDirectDestinationsProvider,
   searchApiFlightCalendarProvider,
   searchApiFlightProvider,
+  normalizeSearchApiError,
 } from "../providers/searchApi.ts";
 import type {
   DirectDestinationsProvider,
@@ -32,6 +33,7 @@ import { createItinerary, type Itinerary } from "../../types/itinerary.ts";
 import type { TripRequest } from "../../types/trip.ts";
 import { addCalendarDays, enumerateDateWindow } from "../utils/dateWindow.ts";
 import { discoverDirectItinerary } from "./discoverDirectRoute.ts";
+import { FatalSearchStageError } from "./fatalStageFailure.ts";
 
 type WarningFunction = (message: string) => void;
 
@@ -108,12 +110,12 @@ export function orderAdventureItineraries(routes: VerifiedHubRoute[]): Itinerary
 }
 
 function throwIfAllStageRequestsFailed(
-  stage: "Calendar validation" | "Detailed verification",
+  stage: "calendar" | "detailed",
   candidateCount: number,
-  failures: { message: string }[],
+  failures: { cause: ReturnType<typeof normalizeSearchApiError> }[],
 ): void {
   if (candidateCount > 0 && failures.length === candidateCount) {
-    throw new Error(`${stage} failed for every candidate.`);
+    throw new FatalSearchStageError(stage, failures.map((failure) => failure.cause));
   }
 }
 
@@ -141,7 +143,10 @@ export async function discoverFlexibleHubCandidates(
   const departureDates = getInitialDepartureDates(input.earliestDeparture);
 
   const exploreResults = await Promise.all(
-    departureDates.map(async (departureDate): Promise<ExploreDiscoveryResult & { candidates?: HubCandidate[] }> => {
+    departureDates.map(async (departureDate): Promise<ExploreDiscoveryResult & {
+      candidates?: HubCandidate[];
+      cause?: ReturnType<typeof normalizeSearchApiError>;
+    }> => {
       try {
         const result = await runCachedDirectDestinations({
           key: buildDirectDestinationsCacheKey({
@@ -174,12 +179,10 @@ export async function discoverFlexibleHubCandidates(
           candidates,
         };
       } catch (error) {
-        const message =
-          error instanceof Error && error.message.trim()
-            ? error.message
-            : "Travel Explore provider request failed.";
+        const cause = normalizeSearchApiError(error);
+        const message = cause.message;
         warn(`Travel Explore failed for ${departureDate}: ${message}`);
-        return { departureDate, error: message };
+        return { departureDate, error: message, cause };
       }
     }),
   );
@@ -191,8 +194,9 @@ export async function discoverFlexibleHubCandidates(
     }));
 
   if (failures.length === departureDates.length) {
-    throw new Error(
-      `Travel Explore failed for every departure date: ${failures[0]?.message ?? "unknown error"}`,
+    throw new FatalSearchStageError(
+      "explore",
+      exploreResults.flatMap((result) => result.cause ? [result.cause] : []),
     );
   }
 
@@ -266,7 +270,7 @@ export async function searchDynamicRoutes(
     { warn },
   );
   throwIfAllStageRequestsFailed(
-    "Calendar validation",
+    "calendar",
     Math.min(candidates.length, 8),
     validation.failures,
   );
@@ -286,7 +290,7 @@ export async function searchDynamicRoutes(
     { warn },
   );
   throwIfAllStageRequestsFailed(
-    "Detailed verification",
+    "detailed",
     validation.topCandidates.length,
     verification.failures,
   );

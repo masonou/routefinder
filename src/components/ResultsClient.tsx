@@ -5,6 +5,10 @@ import { useEffect, useState } from "react";
 
 import type { Itinerary } from "../types/itinerary.ts";
 import type { PublicSearchRequest } from "../lib/utils/searchValidation.ts";
+import type {
+  SearchFailureCode,
+  SearchFailureStage,
+} from "../lib/api/searchFailure.ts";
 import {
   trackNoResults,
   trackResultsFound,
@@ -12,8 +16,9 @@ import {
 } from "../lib/analytics/events";
 import { DirectItineraryCard, ItineraryCard } from "./ItineraryCard";
 import { SearchLoadingState } from "./SearchLoadingState";
-import { partitionItineraries } from "./itineraryPresentation";
+import { isDirectBaseline, partitionItineraries } from "./itineraryPresentation";
 import { getResultsViewState } from "./resultsViewState";
+import { formatSearchFailureReference } from "./searchFailureReference";
 
 interface SearchApiResponse {
   count: number;
@@ -22,21 +27,103 @@ interface SearchApiResponse {
 
 interface SearchApiError {
   error: string;
+  failureCode?: SearchFailureCode;
+  failureReference?: string;
+  failureStage?: SearchFailureStage;
+  retryable?: boolean;
+  providerStatus?: number;
 }
 
 interface ResultsClientProps {
   request: PublicSearchRequest;
 }
 
-function getSearchErrorType(response: Response): "server" | "validation" | "unknown" {
-  if (response.ok || response.status >= 500) return "server";
-  if (response.status === 400) return "validation";
-  return "unknown";
+interface SearchFailurePanelProps {
+  failureReference: string | null;
+  onRetry: () => void;
+}
+
+interface SearchFailureState {
+  code: SearchFailureCode;
+  reference: string;
+  stage: SearchFailureStage;
+  retryable: boolean;
+  providerStatus?: number;
+}
+
+function createClientFailure(
+  code: "SL-REQUEST-NETWORK" | "SL-SEARCH-UNKNOWN",
+  stage: SearchFailureStage,
+): SearchFailureState {
+  const suffix = globalThis.crypto.randomUUID().replace(/-/g, "").slice(0, 8).toUpperCase();
+  return {
+    code,
+    reference: `${code}-${suffix}`,
+    stage,
+    retryable: true,
+  };
+}
+
+function toFailureState(payload: SearchApiError): SearchFailureState {
+  if (
+    payload.failureCode &&
+    payload.failureReference &&
+    payload.failureStage &&
+    typeof payload.retryable === "boolean"
+  ) {
+    return {
+      code: payload.failureCode,
+      reference: payload.failureReference,
+      stage: payload.failureStage,
+      retryable: payload.retryable,
+      ...(payload.providerStatus === undefined ? {} : { providerStatus: payload.providerStatus }),
+    };
+  }
+  return createClientFailure("SL-SEARCH-UNKNOWN", "unknown");
+}
+
+function countResultTypes(itineraries: Itinerary[]) {
+  const directCount = itineraries.filter(isDirectBaseline).length;
+  return { directCount, adventureCount: itineraries.length - directCount };
+}
+
+export function SearchFailurePanel({
+  failureReference,
+  onRetry,
+}: SearchFailurePanelProps) {
+  const referenceText = formatSearchFailureReference(failureReference);
+
+  return (
+    <div className="space-y-3" aria-live="polite">
+      <p className="text-base font-medium text-slate-950">
+        We couldn&apos;t complete this search.
+      </p>
+      <p className="text-sm text-slate-600">Please try again.</p>
+      {referenceText ? (
+        <p className="font-mono text-xs text-slate-500" aria-label={`Failure reference: ${failureReference}`}>
+          {referenceText}
+        </p>
+      ) : null}
+      <div className="flex gap-4 text-sm">
+        <button
+          type="button"
+          onClick={onRetry}
+          className="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 outline-none hover:border-slate-400 focus-visible:ring-2 focus-visible:ring-blue-700"
+        >
+          Try again
+        </button>
+        <Link href="/" className="self-center text-blue-700 underline">
+          New search
+        </Link>
+      </div>
+    </div>
+  );
 }
 
 export function ResultsClient({ request }: ResultsClientProps) {
   const [itineraries, setItineraries] = useState<Itinerary[] | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [failure, setFailure] = useState<SearchFailureState | null>(null);
   const [retryToken, setRetryToken] = useState(0);
 
   useEffect(() => {
@@ -44,6 +131,7 @@ export function ResultsClient({ request }: ResultsClientProps) {
 
     async function fetchResults() {
       setErrorMessage(null);
+      setFailure(null);
       setItineraries(null);
 
       try {
@@ -59,11 +147,21 @@ export function ResultsClient({ request }: ResultsClientProps) {
         const payload = (await response.json()) as SearchApiResponse | SearchApiError;
         if (!response.ok || !("itineraries" in payload) || !Array.isArray(payload.itineraries)) {
           if (!abortController.signal.aborted) {
+            const failureState = toFailureState(
+              "error" in payload ? payload : { error: "Search failed." },
+            );
             trackSearchFailed({
               origin: request.origin,
               destination: request.destination,
-              errorType: getSearchErrorType(response),
+              failureCode: failureState.code,
+              failureReference: failureState.reference,
+              failureStage: failureState.stage,
+              retryable: failureState.retryable,
+              ...(failureState.providerStatus === undefined
+                ? {}
+                : { providerStatus: failureState.providerStatus }),
             });
+            setFailure(failureState);
           }
           setErrorMessage(
             "error" in payload && payload.error ? payload.error : "Search failed."
@@ -75,20 +173,31 @@ export function ResultsClient({ request }: ResultsClientProps) {
         if (payload.itineraries.length === 0) {
           trackNoResults({ origin: request.origin, destination: request.destination });
         } else {
+          const { directCount, adventureCount } = countResultTypes(payload.itineraries);
           trackResultsFound({
             origin: request.origin,
             destination: request.destination,
             resultCount: payload.itineraries.length,
+            directCount,
+            adventureCount,
           });
         }
         setItineraries(payload.itineraries);
       } catch (error) {
         if (!abortController.signal.aborted) {
+          const failureState = createClientFailure(
+            error instanceof TypeError ? "SL-REQUEST-NETWORK" : "SL-SEARCH-UNKNOWN",
+            error instanceof TypeError ? "request" : "unknown",
+          );
           trackSearchFailed({
             origin: request.origin,
             destination: request.destination,
-            errorType: error instanceof TypeError ? "network" : "unknown",
+            failureCode: failureState.code,
+            failureReference: failureState.reference,
+            failureStage: failureState.stage,
+            retryable: failureState.retryable,
           });
+          setFailure(failureState);
           setErrorMessage(error instanceof Error ? error.message : "Search failed.");
         }
       }
@@ -112,24 +221,10 @@ export function ResultsClient({ request }: ResultsClientProps) {
 
   if (viewState === "error") {
     return (
-      <div className="space-y-3" aria-live="polite">
-        <p className="text-base font-medium text-slate-950">
-          We couldn&apos;t complete this search.
-        </p>
-        <p className="text-sm text-slate-600">Please try again.</p>
-        <div className="flex gap-4 text-sm">
-          <button
-            type="button"
-            onClick={() => setRetryToken((current) => current + 1)}
-            className="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 outline-none hover:border-slate-400 focus-visible:ring-2 focus-visible:ring-blue-700"
-          >
-            Try again
-          </button>
-          <Link href="/" className="self-center text-blue-700 underline">
-            New search
-          </Link>
-        </div>
-      </div>
+      <SearchFailurePanel
+        failureReference={failure?.reference ?? null}
+        onRetry={() => setRetryToken((current) => current + 1)}
+      />
     );
   }
 

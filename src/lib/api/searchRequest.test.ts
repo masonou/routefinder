@@ -5,6 +5,8 @@ import { runSearchRequest } from "./searchRequest.ts";
 import type { SearchCache } from "../cache/searchCache.ts";
 import type { Itinerary } from "../../types/itinerary.ts";
 import type { TripRequest } from "../../types/trip.ts";
+import { createSearchApiFlightProvider } from "../providers/searchApi.ts";
+import { FatalSearchStageError } from "../planner/fatalStageFailure.ts";
 
 function searchRequest(body: unknown): Request {
   return new Request("http://localhost/api/search", {
@@ -122,14 +124,105 @@ test("dynamic no-results and provider failures retain public API behaviour", asy
 
   const failure = await runSearchRequest(searchRequest(searchInput()), {
     cache: null,
+    createFailureReference: (code) => `${code}-TESTREF`,
     async searchDynamicRoutes() {
       throw new Error("provider failed");
     },
   });
   assert.deepEqual(failure, {
     status: 500,
-    body: { error: "Flight search is currently unavailable. Please try again." },
+    body: {
+      error: "Flight search is currently unavailable. Please try again.",
+      failureCode: "SL-SEARCH-UNKNOWN",
+      failureReference: "SL-SEARCH-UNKNOWN-TESTREF",
+      failureStage: "unknown",
+      retryable: false,
+    },
   });
+});
+
+test("maps provider failures to stable API references", async () => {
+  const providerFailure = (status: number) => {
+    const provider = createSearchApiFlightProvider({
+      apiKey: "searchapi_test_secret",
+      fetch: async () => new Response(JSON.stringify({ error: "failure" }), { status }),
+    });
+    return provider.searchOneWay({
+      origin: "BNE",
+      destination: "LCA",
+      departureWindow: { start: "2099-08-17", end: "2099-08-17" },
+      adults: 1,
+    });
+  };
+  const timeout = new Error("timeout");
+  timeout.name = "AbortError";
+  const cases: Array<{
+    name: string;
+    run: () => Promise<unknown>;
+    status: number;
+    code: string;
+    stage: string;
+  }> = [
+    { name: "timeout", run: async () => { throw timeout; }, status: 504, code: "SL-PROVIDER-TIMEOUT", stage: "provider" },
+    { name: "rate limit", run: () => providerFailure(429), status: 429, code: "SL-PROVIDER-RATE-LIMIT", stage: "provider" },
+    { name: "unavailable", run: () => providerFailure(503), status: 503, code: "SL-PROVIDER-UNAVAILABLE", stage: "provider" },
+    { name: "authentication", run: () => providerFailure(401), status: 500, code: "SL-PROVIDER-AUTH", stage: "provider" },
+    {
+      name: "invalid provider response",
+      run: () => createSearchApiFlightProvider({
+        apiKey: "searchapi_test_secret",
+        fetch: async () => new Response("not json", { status: 200 }),
+      }).searchOneWay({
+        origin: "BNE", destination: "LCA",
+        departureWindow: { start: "2099-08-17", end: "2099-08-17" }, adults: 1,
+      }),
+      status: 502,
+      code: "SL-PROVIDER-INVALID-RESPONSE",
+      stage: "provider",
+    },
+  ];
+
+  for (const entry of cases) {
+    const result = await runSearchRequest(searchRequest(searchInput()), {
+      cache: null,
+      createFailureReference: (code) => `${code}-TESTREF`,
+      async searchDynamicRoutes() {
+        await entry.run();
+        return [];
+      },
+    });
+    assert.equal(result.status, entry.status, entry.name);
+    if (!("failureCode" in result.body)) {
+      throw new Error(`Expected structured failure response for ${entry.name}.`);
+    }
+    assert.equal(result.body.failureCode, entry.code, entry.name);
+    assert.equal(result.body.failureReference, `${entry.code}-TESTREF`, entry.name);
+    assert.equal(result.body.failureStage, entry.stage, entry.name);
+  }
+});
+
+test("uses the resolved fatal-stage cause in the public failure code and reference", async () => {
+  const result = await runSearchRequest(searchRequest(searchInput()), {
+    cache: null,
+    createFailureReference: (code) => `${code}-TESTREF`,
+    async searchDynamicRoutes() {
+      throw new FatalSearchStageError("explore", Array.from({ length: 4 }, () => ({
+        message: "SearchAPI authentication failed.",
+        status: 401,
+        retryable: false,
+      })));
+    },
+  });
+
+  assert.equal(result.status, 500);
+  if (!("failureCode" in result.body)) {
+    throw new Error("Expected a structured search failure.");
+  }
+  assert.equal(result.body.failureCode, "SL-PROVIDER-AUTH");
+  assert.equal(result.body.failureStage, "explore");
+  assert.equal(result.body.failureReference, "SL-PROVIDER-AUTH-TESTREF");
+  assert.equal(result.body.retryable, false);
+  assert.equal(result.body.providerStatus, 401);
 });
 
 test("request validation and provider failures remain safe for public callers", async () => {
@@ -145,6 +238,7 @@ test("request validation and provider failures remain safe for public callers", 
   const secret = "searchapi_private_do_not_disclose";
   const failedResult = await runSearchRequest(searchRequest(searchInput()), {
     cache: null,
+    createFailureReference: (code) => `${code}-TESTREF`,
     async searchDynamicRoutes() {
       throw new Error(`Authorization: Bearer ${secret}`);
     },
@@ -152,7 +246,13 @@ test("request validation and provider failures remain safe for public callers", 
 
   assert.deepEqual(failedResult, {
     status: 500,
-    body: { error: "Flight search is currently unavailable. Please try again." },
+    body: {
+      error: "Flight search is currently unavailable. Please try again.",
+      failureCode: "SL-SEARCH-UNKNOWN",
+      failureReference: "SL-SEARCH-UNKNOWN-TESTREF",
+      failureStage: "unknown",
+      retryable: false,
+    },
   });
   assert.doesNotMatch(JSON.stringify(failedResult), new RegExp(secret));
 });

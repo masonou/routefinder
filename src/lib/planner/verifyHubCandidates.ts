@@ -21,6 +21,8 @@ import {
   VERIFIED_ROUTE_STOPS_WEIGHT,
 } from "../constants/planner.ts";
 import type { FlightProvider } from "../providers/types.ts";
+import { normalizeSearchApiError, type NormalizedSearchApiError } from "../providers/searchApi.ts";
+import { FatalSearchStageError } from "./fatalStageFailure.ts";
 import { calculateHubStayNights, isFlightWithinDepartureWindow, isReasonableFlight } from "./filters.ts";
 import type { OnwardFlightPolicy, ValidatedHubCandidate } from "./validateHubCandidates.ts";
 import type { FlightOffer, Money } from "../../types/flight.ts";
@@ -63,6 +65,7 @@ export interface DetailedVerificationRejection {
 export interface DetailedVerificationFailure {
   airportCode: string;
   message: string;
+  cause: NormalizedSearchApiError;
 }
 
 export interface DetailedVerificationLookup {
@@ -118,9 +121,20 @@ interface CandidateFailure {
   type: "failure";
   airportCode: string;
   message: string;
+  cause: NormalizedSearchApiError;
 }
 
 type CandidateOutcome = CandidateSuccess | CandidateRejection | CandidateFailure;
+
+function createDetailedVerificationFailure(
+  airportCode: string,
+  message: string,
+  cause: NormalizedSearchApiError,
+): DetailedVerificationFailure {
+  const failure = { airportCode, message } as DetailedVerificationFailure;
+  Object.defineProperty(failure, "cause", { value: cause, enumerable: false });
+  return failure;
+}
 
 function isMatchingOffer(
   offer: FlightOffer,
@@ -533,12 +547,10 @@ export async function verifyHubCandidates(
           ],
         };
       } catch (error) {
-        const message =
-          error instanceof Error && error.message.trim()
-            ? error.message
-            : "Detailed flight provider request failed.";
+        const cause = normalizeSearchApiError(error);
+        const message = cause.message;
         warn(`Detailed verification failed for ${hub.airportCode}: ${message}`);
-        return { type: "failure", airportCode: hub.airportCode, message };
+        return { type: "failure", airportCode: hub.airportCode, message, cause };
       }
     },
   );
@@ -550,10 +562,15 @@ export async function verifyHubCandidates(
   const verifiedRoutes = rankedRoutes.verifiedRoutes;
   const failures = outcomes
     .filter((outcome): outcome is CandidateFailure => outcome.type === "failure")
-    .map(({ airportCode, message }) => ({ airportCode, message }));
+    .map(({ airportCode, message, cause }) =>
+      createDetailedVerificationFailure(airportCode, message, cause),
+    );
 
   if (candidates.length > 0 && verifiedRoutes.length === 0 && failures.length === candidates.length) {
-    throw new Error("Detailed verification failed for every candidate.");
+    throw new FatalSearchStageError(
+      "detailed",
+      failures.map((failure) => failure.cause),
+    );
   }
 
   return {

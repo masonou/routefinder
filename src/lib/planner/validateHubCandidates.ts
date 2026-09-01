@@ -17,6 +17,7 @@ import type {
   FlightCalendarDay,
   FlightCalendarProvider,
 } from "../providers/types.ts";
+import { normalizeSearchApiError, type NormalizedSearchApiError } from "../providers/searchApi.ts";
 import {
   addCalendarDays,
   calendarDayDifference,
@@ -47,6 +48,7 @@ export interface ValidatedHubCandidate extends HubCandidate {
 export interface CalendarValidationFailure {
   airportCode: string;
   message: string;
+  cause: NormalizedSearchApiError;
 }
 
 export interface CalendarValidationLookup {
@@ -102,12 +104,23 @@ interface CandidateValidationFailure {
   type: "failure";
   airportCode: string;
   message: string;
+  cause: NormalizedSearchApiError;
 }
 
 type CandidateValidationOutcome =
   | CandidateValidationSuccess
   | CandidateValidationRejected
   | CandidateValidationFailure;
+
+function createCalendarValidationFailure(
+  airportCode: string,
+  message: string,
+  cause: NormalizedSearchApiError,
+): CalendarValidationFailure {
+  const failure = { airportCode, message } as CalendarValidationFailure;
+  Object.defineProperty(failure, "cause", { value: cause, enumerable: false });
+  return failure;
+}
 
 function getOnwardOptions(
   firstLegDepartureDate: string,
@@ -339,12 +352,10 @@ export async function validateHubCandidates(
           cacheStatus: result.cacheStatus,
         };
       } catch (error) {
-        const message =
-          error instanceof Error && error.message.trim()
-            ? error.message
-            : "Calendar provider request failed.";
+        const cause = normalizeSearchApiError(error);
+        const message = cause.message;
         warn(`Calendar validation failed for ${candidate.airportCode}: ${message}`);
-        return { type: "failure", airportCode: candidate.airportCode, message };
+        return { type: "failure", airportCode: candidate.airportCode, message, cause };
       }
       },
     );
@@ -385,7 +396,10 @@ export async function validateHubCandidates(
     failures: [...new Map(
       outcomes
         .filter((outcome): outcome is CandidateValidationFailure => outcome.type === "failure")
-        .map(({ airportCode, message }) => [airportCode, { airportCode, message }] as const),
+        .map(({ airportCode, message, cause }) => [
+          airportCode,
+          createCalendarValidationFailure(airportCode, message, cause),
+        ] as const),
     ).values()],
     // Keep lookup accounting for both viable and no-flight Calendar results.
     // The production planner does not consume this field; it lets diagnostics

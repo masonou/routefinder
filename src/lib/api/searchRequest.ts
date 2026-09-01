@@ -5,7 +5,12 @@ import {
   runCachedSearch,
 } from "../cache/searchCache.ts";
 import { searchDynamicRoutes } from "../planner/searchDynamicRoutes.ts";
-import { normalizeSearchApiError } from "../providers/searchApi.ts";
+import {
+  classifySearchFailure,
+  createSearchFailureReference,
+  type SearchFailureCode,
+  type SearchFailureResponse,
+} from "./searchFailure.ts";
 import {
   SearchValidationError,
   toTripRequest,
@@ -20,6 +25,7 @@ type DynamicSearchFunction = (request: TripRequest) => Promise<Itinerary[]>;
 export interface SearchRequestDependencies {
   cache?: SearchCache | null;
   searchDynamicRoutes?: DynamicSearchFunction;
+  createFailureReference?: (failureCode: SearchFailureCode) => string;
 }
 
 export type SearchRequestResult =
@@ -28,7 +34,11 @@ export type SearchRequestResult =
       body: { count: number; itineraries: Itinerary[] };
       headers: Record<string, string>;
     }
-  | { status: 400 | 500; body: { error: string } };
+  | { status: 400; body: { error: string } }
+  | {
+      status: 429 | 500 | 502 | 503 | 504;
+      body: SearchFailureResponse;
+    };
 
 export async function runSearchRequest(
   request: Request,
@@ -67,14 +77,27 @@ export async function runSearchRequest(
       return { status: 400, body: { error: error.message } };
     }
 
-    const normalizedError = normalizeSearchApiError(error);
+    const failure = classifySearchFailure(error);
+    const failureReference = (dependencies.createFailureReference ?? createSearchFailureReference)(
+      failure.failureCode,
+    );
+    console.error(
+      `[${failureReference}] search failed (${failure.failureCode}, ${failure.failureStage})${failure.providerStatus === undefined ? "" : ` provider_status=${failure.providerStatus}`}: ${failure.internalMessage}`,
+    );
     return {
-      status: 500,
+      status: failure.status,
       body: {
         error:
-          normalizedError.status === 429
+          failure.failureCode === "SL-PROVIDER-RATE-LIMIT"
             ? "Flight search is temporarily busy. Please try again."
             : "Flight search is currently unavailable. Please try again.",
+        failureCode: failure.failureCode,
+        failureReference,
+        failureStage: failure.failureStage,
+        retryable: failure.retryable,
+        ...(failure.providerStatus === undefined
+          ? {}
+          : { providerStatus: failure.providerStatus }),
       },
     };
   }

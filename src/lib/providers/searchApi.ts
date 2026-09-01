@@ -201,7 +201,6 @@ export function getSearchApiApiKey(
   const apiKey = environment.SEARCHAPI_API_KEY?.trim();
   if (!apiKey) {
     throw new SearchApiError("SEARCHAPI_API_KEY is not configured.", {
-      status: 500,
       retryable: false,
     });
   }
