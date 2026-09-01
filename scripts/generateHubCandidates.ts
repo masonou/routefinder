@@ -10,6 +10,7 @@ import {
   DEPARTURE_FLEX_DAYS,
   MAX_CALENDAR_CANDIDATES,
   MAX_DEPARTURE_VARIANTS_PER_HUB,
+  MAX_VERIFIED_HUBS,
   MAX_HUB_CANDIDATES,
   MAX_HUB_DETOUR_RATIO,
 } from "../src/lib/constants/planner.ts";
@@ -19,10 +20,13 @@ import {
   generateHubCandidates,
   type HubCandidate,
 } from "../src/lib/planner/hubCandidates.ts";
-import { orderAdventureItineraries } from "../src/lib/planner/searchDynamicRoutes.ts";
+import {
+  orderAdventureItineraries,
+  verifyCandidatesUntilFilled,
+} from "../src/lib/planner/searchDynamicRoutes.ts";
 import { validateHubCandidates } from "../src/lib/planner/validateHubCandidates.ts";
 import {
-  verifyHubCandidates,
+  rankVerifiedRoutes,
   type DetailedOfferTrace,
 } from "../src/lib/planner/verifyHubCandidates.ts";
 import {
@@ -312,28 +316,62 @@ async function run(): Promise<void> {
       onDetailedTrace: (trace) => detailedTraces.push(trace),
     },
   });
-  const validation = await validateHubCandidates(
+  const cleanValidation = await validateHubCandidates(
     { candidates: calendar, destination },
     diagnosticProvider,
+    { mode: "clean" },
   );
-  const detailed = await verifyHubCandidates(
-    { origin, destination, candidates: validation.topCandidates },
+  const cleanDetailed = await verifyCandidatesUntilFilled(
+    { origin, destination, adults: 1 },
+    cleanValidation.topCandidates,
+    MAX_VERIFIED_HUBS,
+    new Set(),
     diagnosticProvider,
-    { onDetailedOffers: (trace) => offerTraces.push(trace) },
+    { warn: () => {}, onDetailedOffers: (trace) => offerTraces.push(trace) },
   );
-  const finalAdventures = orderAdventureItineraries(detailed.verifiedRoutes);
-  const rejected = new Map(detailed.rejected.map((entry) => [entry.airportCode, entry.reason]));
+  const cleanVerifiedHubs = new Set(
+    cleanDetailed.verifiedRoutes.map((route) => route.hub.airportCode.trim().toUpperCase()),
+  );
+  const remainingSlots = MAX_VERIFIED_HUBS - cleanDetailed.verifiedRoutes.length;
+  const fallbackValidation = remainingSlots > 0
+    ? await validateHubCandidates(
+      {
+        candidates: calendar.filter(
+          (candidate) => !cleanVerifiedHubs.has(candidate.airportCode.trim().toUpperCase()),
+        ),
+        destination,
+      },
+      diagnosticProvider,
+      { mode: "fallback" },
+    )
+    : undefined;
+  const fallbackDetailed = fallbackValidation
+    ? await verifyCandidatesUntilFilled(
+      { origin, destination, adults: 1 },
+      fallbackValidation.validatedCandidates,
+      remainingSlots,
+      cleanVerifiedHubs,
+      diagnosticProvider,
+      { warn: () => {}, onDetailedOffers: (trace) => offerTraces.push(trace) },
+    )
+    : { verifiedRoutes: [], rejected: [], detailedLookups: [], attemptedCandidates: 0 };
+  const allVerifiedRoutes = [...cleanDetailed.verifiedRoutes, ...fallbackDetailed.verifiedRoutes];
+  const finalAdventures = orderAdventureItineraries(rankVerifiedRoutes(allVerifiedRoutes).verifiedRoutes);
+  const rejected = new Map(
+    [...cleanDetailed.rejected, ...fallbackDetailed.rejected]
+      .map((entry) => [entry.airportCode, entry.reason]),
+  );
   table("CURRENT PIPELINE DISPOSITIONS", calendar.map((candidate) => {
     const candidateKey = key(candidate);
-    const top = validation.topCandidates.some((entry) => key(entry) === candidateKey);
-    const validated = validation.validatedCandidates.some((entry) => key(entry) === candidateKey);
-    const verified = detailed.verifiedRoutes.some((route) => key(route.hub) === candidateKey);
+    const top = cleanValidation.topCandidates.some((entry) => key(entry) === candidateKey);
+    const validated = cleanValidation.validatedCandidates.some((entry) => key(entry) === candidateKey);
+    const verified = allVerifiedRoutes.some((route) => key(route.hub) === candidateKey);
     return {
       hub: candidate.airportCode, date: candidate.firstLegDepartureDate, detour: candidate.detourRatio,
-      primaryReason: top ? rejected.has(candidate.airportCode) ? `detailed_rejected: ${rejected.get(candidate.airportCode)}` : verified ? "final_adventure" : "detailed_provider_failure_or_quality_filter" : validated ? "not_selected_for_detailed" : validation.failures.some((entry) => entry.airportCode === candidate.airportCode) ? "calendar_provider_failure" : validation.rejectedNoViableDates.includes(candidate.airportCode) ? "no_nonstop_onward_calendar" : "calendar_outcome_not_recorded",
+      primaryReason: top ? rejected.has(candidate.airportCode) ? `detailed_rejected: ${rejected.get(candidate.airportCode)}` : verified ? "final_adventure" : "detailed_provider_failure_or_quality_filter" : validated ? "not_selected_for_detailed" : cleanValidation.failures.some((entry) => entry.airportCode === candidate.airportCode) ? "calendar_provider_failure" : cleanValidation.rejectedNoViableDates.includes(candidate.airportCode) ? "no_nonstop_onward_calendar" : "calendar_outcome_not_recorded",
     };
   }));
-  validation.topCandidates
+  cleanValidation.topCandidates
     .filter((candidate) => candidate.onwardPolicy === "nonstop")
     .forEach((candidate) => {
       const rejectionReason = rejected.get(candidate.airportCode);
@@ -344,18 +382,34 @@ async function run(): Promise<void> {
           calendarTraces,
           detailedTraces,
           offerTraces,
-          validation.calendarLookups,
+          cleanValidation.calendarLookups,
         );
       }
     });
   console.log("\nCURRENT PIPELINE");
-  console.log(`Explore ${raw.length} variants → geography ${geography.length} → per-date cap ${stage1.length} → Calendar ${calendar.length} → validated ${validation.validatedCandidates.length} → detailed ${validation.topCandidates.length} → verified ${detailed.verifiedRoutes.length} → final adventures ${finalAdventures.length}.`);
-  console.log(`Calendar checks: ${validation.nonstopCalendarChecks} nonstop; ${validation.cleanHubCount} clean hubs; ${validation.fallbackCalendarChecks} fallback.`);
+  console.log(`CLEAN CALENDAR\n${cleanValidation.validatedCandidates.length} candidates`);
+  console.log(`CLEAN DETAILED\nattempted: ${cleanDetailed.attemptedCandidates}\nverified: ${cleanDetailed.verifiedRoutes.length}`);
+  console.log(`REMAINING SLOTS\n${remainingSlots}`);
+  if (fallbackValidation) {
+    console.log(`FALLBACK CALENDAR\nattempted: ${fallbackValidation.fallbackCalendarChecks}\nvalidated: ${fallbackValidation.validatedCandidates.length}`);
+    console.log(`FALLBACK DETAILED\nattempted: ${fallbackDetailed.attemptedCandidates}\nverified: ${fallbackDetailed.verifiedRoutes.length}`);
+  } else {
+    console.log("FALLBACK\nskipped: 3 clean adventures already verified");
+  }
+  console.log(`FINAL\nclean: ${cleanDetailed.verifiedRoutes.length}\nfallback: ${fallbackDetailed.verifiedRoutes.length}\ntotal adventures: ${finalAdventures.length}`);
   const exploreHits = explore.filter((result) => result.cacheStatus === "HIT").length;
-  const calendarHits = validation.calendarLookups.filter((lookup) => lookup.cacheStatus === "HIT").length;
-  const calendarMisses = validation.calendarLookups.filter((lookup) => lookup.cacheStatus === "MISS").length;
-  const detailedHits = detailed.detailedLookups.filter((lookup) => lookup.cacheStatus === "HIT").length;
-  const detailedMisses = detailed.detailedLookups.filter((lookup) => lookup.cacheStatus === "MISS").length;
+  const calendarLookups = [
+    ...cleanValidation.calendarLookups,
+    ...(fallbackValidation?.calendarLookups ?? []),
+  ];
+  const detailedLookups = [
+    ...cleanDetailed.detailedLookups,
+    ...fallbackDetailed.detailedLookups,
+  ];
+  const calendarHits = calendarLookups.filter((lookup) => lookup.cacheStatus === "HIT").length;
+  const calendarMisses = calendarLookups.filter((lookup) => lookup.cacheStatus === "MISS").length;
+  const detailedHits = detailedLookups.filter((lookup) => lookup.cacheStatus === "HIT").length;
+  const detailedMisses = detailedLookups.filter((lookup) => lookup.cacheStatus === "MISS").length;
   console.log("\nAPI-CALL ACCOUNTING");
   console.log(`Live SearchAPI calls: Explore ${explore.length - exploreHits}; Calendar ${calendarMisses} (${calendarHits} cache hits; failures have no cache status); Detailed ${detailedMisses} (${detailedHits} cache hits); total ${explore.length - exploreHits + calendarMisses + detailedMisses}.`);
   console.log("Counterfactual cutoff and budget analysis above was local only: zero additional Calendar or Detailed calls.");

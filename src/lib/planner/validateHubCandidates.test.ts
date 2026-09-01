@@ -93,7 +93,7 @@ test("uses connecting Calendar searches only to fill clean-hub gaps and caps the
         return [{ departureDate: "2026-09-05", price: 100, currency: "EUR", hasFlights: true }];
       },
     },
-    { cache: null },
+    { cache: null, mode: "both" },
   );
 
   assert.equal(result.nonstopCalendarChecks, MAX_CALENDAR_CANDIDATES);
@@ -119,7 +119,7 @@ test("uses fallback only for non-clean hubs when two clean hubs survive", async 
         return [{ departureDate: "2026-09-05", price: 100, currency: "EUR", hasFlights: true }];
       },
     },
-    { cache: null },
+    { cache: null, mode: "both" },
   );
 
   assert.equal(result.cleanHubCount, 2);

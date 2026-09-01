@@ -110,6 +110,108 @@ function flightProvider(): FlightProvider {
   };
 }
 
+const fallbackScenarioHubLocations: Array<[string, string, string, number, number]> = [
+  ["DXB", "Dubai", "United Arab Emirates", 25.24979, 55.370992],
+  ["DOH", "Doha", "Qatar", 25.273056, 51.608056],
+  ["BKK", "Bangkok", "Thailand", 13.6811, 100.747002],
+  ["SIN", "Singapore", "Singapore", 1.35019, 103.994003],
+];
+
+const fallbackScenarioHubs: DirectDestination[] = fallbackScenarioHubLocations.map(([airportCode, city, country, latitude, longitude], index) => ({
+  airportCode,
+  city,
+  country,
+  latitude,
+  longitude,
+  outboundDate: "2026-09-01",
+  indicativePrice: 100 + index,
+  currency: "EUR",
+  flightDurationMinutes: 240 + index,
+}));
+
+async function runFallbackScenario(cleanSuccesses: number, fallbackStops = 1) {
+  const fallbackOnwardDates = new Set<string>();
+  const cleanFailedHubs = new Set<string>();
+  const fallbackDetailedHubs = new Set<string>();
+  let cleanCalendarCalls = 0;
+  let fallbackCalendarCalls = 0;
+  let cleanOnwardCalls = 0;
+  let fallbackDetailedCalls = 0;
+
+  const itineraries = await searchDynamicRoutes(request, {
+    directDestinationsCache: null,
+    flightCalendarCache: null,
+    flightOffersCache: null,
+    directDestinationsProvider: {
+      async getDirectDestinations(input) {
+        return fallbackScenarioHubs.map((hub) => ({ ...hub, outboundDate: input.departureDate }));
+      },
+    },
+    flightCalendarProvider: {
+      async getFlightCalendar(input) {
+        if (input.origin === "LCA" && input.destination === "DPS") {
+          return [{ departureDate: "2026-09-01", price: 500, currency: "EUR", hasFlights: true }];
+        }
+        const isFallback = input.stopPolicy === "two_stops_or_fewer";
+        if (isFallback) {
+          fallbackCalendarCalls += 1;
+          fallbackOnwardDates.add(`${input.origin}:${input.departureWindow.end}`);
+        } else {
+          cleanCalendarCalls += 1;
+        }
+        return [{
+          departureDate: isFallback ? input.departureWindow.end : input.departureWindow.start,
+          price: 300,
+          currency: "EUR",
+          hasFlights: true,
+        }];
+      },
+    },
+    flightProvider: {
+      name: "test",
+      async searchOneWay(input) {
+        if (input.origin === "LCA") {
+          return [offer(
+            `first-${input.destination}-${input.departureWindow.start}`,
+            "LCA",
+            input.destination,
+            input.departureWindow.start,
+            200,
+            240,
+          )];
+        }
+        const onwardKey = `${input.origin}:${input.departureWindow.start}`;
+        if (fallbackOnwardDates.has(onwardKey)) {
+          fallbackDetailedCalls += 1;
+          fallbackDetailedHubs.add(input.origin);
+          return [offer(`fallback-${input.origin}`, input.origin, "DPS", input.departureWindow.start, 300, 480, fallbackStops)];
+        }
+        cleanOnwardCalls += 1;
+        if (cleanOnwardCalls > cleanSuccesses) cleanFailedHubs.add(input.origin);
+        return [offer(
+          `clean-${input.origin}`,
+          input.origin,
+          "DPS",
+          input.departureWindow.start,
+          300,
+          480,
+          cleanOnwardCalls <= cleanSuccesses ? 0 : 1,
+        )];
+      },
+    },
+  });
+
+  return {
+    adventures: itineraries.filter((itinerary) => itinerary.legs.length === 2),
+    cleanCalendarCalls,
+    fallbackCalendarCalls,
+    cleanOnwardCalls,
+    fallbackDetailedCalls,
+    cleanFailedHubs,
+    fallbackDetailedHubs,
+  };
+}
+
 function verifiedRouteWithLocation(
   airportCode: string,
   city: string,
@@ -236,6 +338,57 @@ test("dynamic orchestration maps verified routes into generic itineraries", asyn
   assert.equal(direct?.legs.length, 1);
   assert.equal(direct?.legs[0]?.stopoverAfter, undefined);
   assert.equal(direct?.totalStops, 0);
+});
+
+test("three clean verified adventures skip fallback Calendar and detailed work", async () => {
+  const result = await runFallbackScenario(3);
+
+  assert.equal(result.adventures.length, 3);
+  assert.equal(result.cleanOnwardCalls, 3);
+  assert.equal(result.fallbackCalendarCalls, 0);
+  assert.equal(result.fallbackDetailedCalls, 0);
+});
+
+test("fallback fills slots left by clean detailed failures and can retry a failed clean hub", async () => {
+  const result = await runFallbackScenario(1);
+
+  assert.equal(result.adventures.length, 3);
+  assert.equal(result.cleanOnwardCalls, 3);
+  assert.equal(result.fallbackCalendarCalls, 4);
+  assert.equal(result.fallbackDetailedCalls, 2);
+  assert.ok(
+    [...result.cleanFailedHubs].some((hub) => result.fallbackDetailedHubs.has(hub)),
+    "a clean-detailed failure should remain eligible for fallback verification",
+  );
+});
+
+test("zero clean detailed adventures pursue fallback routes without manufacturing missing slots", async () => {
+  const result = await runFallbackScenario(0);
+
+  assert.ok(result.adventures.length > 0);
+  assert.ok(result.adventures.length <= 3);
+  assert.equal(result.cleanOnwardCalls, 3);
+  assert.equal(result.fallbackCalendarCalls, 4);
+  assert.ok(result.fallbackDetailedCalls > 0);
+});
+
+test("fallback rejections leave the successful clean portfolio intact", async () => {
+  const result = await runFallbackScenario(1, 3);
+
+  assert.equal(result.adventures.length, 1);
+  assert.equal(result.fallbackCalendarCalls, 4);
+  assert.ok(result.fallbackDetailedCalls > 0);
+});
+
+test("a fallback Calendar candidate with a verified nonstop onward leg is clean", async () => {
+  const result = await runFallbackScenario(1, 0);
+
+  assert.equal(result.adventures.length, 3);
+  assert.ok(
+    result.adventures.slice(1).some((itinerary) =>
+      itinerary.legs[1]?.flight.stops === 0,
+    ),
+  );
 });
 
 test("dynamic orchestration returns no results when Explore finds no viable candidates", async () => {

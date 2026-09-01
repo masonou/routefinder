@@ -78,6 +78,7 @@ export interface ValidateHubCandidatesInput {
 export interface ValidateHubCandidatesOptions {
   cache?: FlightCalendarCache | null;
   warn?: (message: string) => void;
+  mode?: "clean" | "fallback" | "both";
 }
 
 interface PendingCandidate {
@@ -297,6 +298,7 @@ export async function validateHubCandidates(
 
   const cache = options.cache === undefined ? getFlightCalendarCache() : options.cache;
   const warn = options.warn ?? console.warn;
+  const mode = options.mode ?? "clean";
   const validate = async (
     candidates: HubCandidate[],
     onwardPolicy: OnwardFlightPolicy,
@@ -362,7 +364,9 @@ export async function validateHubCandidates(
   };
 
   const calendarCandidates = input.candidates.slice(0, MAX_CALENDAR_CANDIDATES);
-  const nonstopOutcomes = await validate(calendarCandidates, "nonstop");
+  const nonstopOutcomes = mode === "fallback"
+    ? []
+    : await validate(calendarCandidates, "nonstop");
   const cleanCandidates = collapseValidatedHubVariants(rankValidatedCandidates(
     nonstopOutcomes
       .filter((outcome): outcome is CandidateValidationSuccess => outcome.type === "success")
@@ -371,12 +375,18 @@ export async function validateHubCandidates(
   const cleanHubs = new Set(
     cleanCandidates.map((candidate) => candidate.airportCode.trim().toUpperCase()),
   );
-  const fallbackCandidates = cleanCandidates.length >= MAX_VALIDATED_HUBS
+  const fallbackCandidates = mode === "clean"
     ? []
-    : calendarCandidates
-      .filter((candidate) => !cleanHubs.has(candidate.airportCode.trim().toUpperCase()))
-      .slice(0, MAX_CONNECTING_FALLBACK_CALENDAR_CALLS);
-  const fallbackOutcomes = await validate(fallbackCandidates, "connecting_fallback");
+    : mode === "fallback"
+      ? calendarCandidates.slice(0, MAX_CONNECTING_FALLBACK_CALENDAR_CALLS)
+      : cleanCandidates.length >= MAX_VALIDATED_HUBS
+        ? []
+        : calendarCandidates
+          .filter((candidate) => !cleanHubs.has(candidate.airportCode.trim().toUpperCase()))
+          .slice(0, MAX_CONNECTING_FALLBACK_CALENDAR_CALLS);
+  const fallbackOutcomes = mode === "clean"
+    ? []
+    : await validate(fallbackCandidates, "connecting_fallback");
   const fallbackValidatedCandidates = collapseValidatedHubVariants(rankValidatedCandidates(
     fallbackOutcomes
       .filter((outcome): outcome is CandidateValidationSuccess => outcome.type === "success")

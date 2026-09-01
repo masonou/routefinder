@@ -24,9 +24,17 @@ import {
   selectCalendarCandidateVariants,
   type HubCandidate,
 } from "./hubCandidates.ts";
-import { validateHubCandidates } from "./validateHubCandidates.ts";
 import {
+  validateHubCandidates,
+  type ValidatedHubCandidate,
+} from "./validateHubCandidates.ts";
+import {
+  rankVerifiedRoutes,
   verifyHubCandidates,
+  type DetailedVerificationFailure,
+  type DetailedVerificationLookup,
+  type DetailedVerificationRejection,
+  type VerifyHubCandidatesOptions,
   type VerifiedHubRoute,
 } from "./verifyHubCandidates.ts";
 import { createItinerary, type Itinerary } from "../../types/itinerary.ts";
@@ -117,6 +125,79 @@ function throwIfAllStageRequestsFailed(
   if (candidateCount > 0 && failures.length === candidateCount) {
     throw new FatalSearchStageError(stage, failures.map((failure) => failure.cause));
   }
+}
+
+export interface DetailedVerificationRun {
+  verifiedRoutes: VerifiedHubRoute[];
+  failures: DetailedVerificationFailure[];
+  rejected: DetailedVerificationRejection[];
+  detailedLookups: DetailedVerificationLookup[];
+  attemptedCandidates: number;
+}
+
+function candidateKey(candidate: Pick<ValidatedHubCandidate, "airportCode" | "firstLegDepartureDate">): string {
+  return `${candidate.airportCode.trim().toUpperCase()}:${candidate.firstLegDepartureDate}`;
+}
+
+export async function verifyCandidatesUntilFilled(
+  input: Pick<TripRequest, "origin" | "destination" | "adults">,
+  candidates: ValidatedHubCandidate[],
+  slots: number,
+  initialVerifiedHubs: Set<string>,
+  provider: FlightProvider,
+  options: Pick<DynamicSearchDependencies, "flightOffersCache" | "warn"> &
+    Pick<VerifyHubCandidatesOptions, "onDetailedOffers">,
+): Promise<DetailedVerificationRun> {
+  const verifiedRoutes: VerifiedHubRoute[] = [];
+  const failures: DetailedVerificationFailure[] = [];
+  const rejected: DetailedVerificationRejection[] = [];
+  const detailedLookups: DetailedVerificationLookup[] = [];
+  const attempted = new Set<string>();
+  const verifiedHubs = new Set(initialVerifiedHubs);
+
+  while (verifiedRoutes.length < slots) {
+    const batch: ValidatedHubCandidate[] = [];
+    const batchHubs = new Set<string>();
+    const batchSize = slots - verifiedRoutes.length;
+
+    for (const candidate of candidates) {
+      const key = candidateKey(candidate);
+      const hub = candidate.airportCode.trim().toUpperCase();
+      if (attempted.has(key) || verifiedHubs.has(hub) || batchHubs.has(hub)) continue;
+      batch.push(candidate);
+      batchHubs.add(hub);
+      if (batch.length === batchSize) break;
+    }
+
+    if (batch.length === 0) break;
+    batch.forEach((candidate) => attempted.add(candidateKey(candidate)));
+
+    const result = await verifyHubCandidates(
+      { ...input, candidates: batch },
+      provider,
+      {
+        cache: options.flightOffersCache,
+        warn: options.warn,
+        onDetailedOffers: options.onDetailedOffers,
+        throwOnAllFailures: false,
+      },
+    );
+    verifiedRoutes.push(...result.verifiedRoutes);
+    failures.push(...result.failures);
+    rejected.push(...result.rejected);
+    detailedLookups.push(...result.detailedLookups);
+    result.verifiedRoutes.forEach((route) =>
+      verifiedHubs.add(route.hub.airportCode.trim().toUpperCase()),
+    );
+  }
+
+  return {
+    verifiedRoutes,
+    failures,
+    rejected,
+    detailedLookups,
+    attemptedCandidates: attempted.size,
+  };
 }
 
 export function getInitialDepartureDates(earliestDeparture: string): string[] {
@@ -264,38 +345,77 @@ export async function searchDynamicRoutes(
     return appendDirectBaseline([], directItinerary);
   }
 
-  const validation = await validateHubCandidates(
+  const cleanValidation = await validateHubCandidates(
     { candidates, destination: request.destination },
     flightCalendarProvider,
-    { warn },
+    { cache: dependencies.flightCalendarCache, warn, mode: "clean" },
   );
   throwIfAllStageRequestsFailed(
     "calendar",
     Math.min(candidates.length, 8),
-    validation.failures,
+    cleanValidation.failures,
   );
-  if (validation.topCandidates.length === 0) {
-    const directItinerary = await directItineraryPromise;
-    return appendDirectBaseline([], directItinerary);
+  const cleanVerification = await verifyCandidatesUntilFilled(
+    request,
+    cleanValidation.topCandidates,
+    MAX_VERIFIED_HUBS,
+    new Set(),
+    flightProvider,
+    { flightOffersCache: dependencies.flightOffersCache, warn },
+  );
+  const cleanVerifiedHubs = new Set(
+    cleanVerification.verifiedRoutes.map((route) => route.hub.airportCode.trim().toUpperCase()),
+  );
+  const remainingSlots = MAX_VERIFIED_HUBS - cleanVerification.verifiedRoutes.length;
+  const fallbackPool = candidates.filter(
+    (candidate) => !cleanVerifiedHubs.has(candidate.airportCode.trim().toUpperCase()),
+  );
+  const fallbackValidation = remainingSlots > 0
+    ? await validateHubCandidates(
+      { candidates: fallbackPool, destination: request.destination },
+      flightCalendarProvider,
+      { cache: dependencies.flightCalendarCache, warn, mode: "fallback" },
+    )
+    : undefined;
+  const fallbackVerification = fallbackValidation
+    ? await verifyCandidatesUntilFilled(
+      request,
+      fallbackValidation.validatedCandidates,
+      remainingSlots,
+      cleanVerifiedHubs,
+      flightProvider,
+      { flightOffersCache: dependencies.flightOffersCache, warn },
+    )
+    : {
+      verifiedRoutes: [],
+      failures: [],
+      rejected: [],
+      detailedLookups: [],
+      attemptedCandidates: 0,
+    };
+
+  const verifiedRoutes = [
+    ...cleanVerification.verifiedRoutes,
+    ...fallbackVerification.verifiedRoutes,
+  ];
+  const detailedFailures = [
+    ...cleanVerification.failures,
+    ...fallbackVerification.failures,
+  ];
+  const detailedAttempts =
+    cleanVerification.attemptedCandidates + fallbackVerification.attemptedCandidates;
+  if (
+    verifiedRoutes.length === 0 &&
+    detailedAttempts > 0 &&
+    detailedFailures.length === detailedAttempts
+  ) {
+    throw new FatalSearchStageError(
+      "detailed",
+      detailedFailures.map((failure) => failure.cause),
+    );
   }
 
-  const verification = await verifyHubCandidates(
-    {
-      origin: request.origin,
-      destination: request.destination,
-      candidates: validation.topCandidates,
-      adults: request.adults,
-    },
-    flightProvider,
-    { warn },
-  );
-  throwIfAllStageRequestsFailed(
-    "detailed",
-    validation.topCandidates.length,
-    verification.failures,
-  );
-
-  const adventures = orderAdventureItineraries(verification.verifiedRoutes);
+  const adventures = orderAdventureItineraries(rankVerifiedRoutes(verifiedRoutes).verifiedRoutes);
   const directItinerary = await directItineraryPromise;
   return appendDirectBaseline(adventures, directItinerary);
 }

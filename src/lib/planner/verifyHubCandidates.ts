@@ -85,6 +85,7 @@ export interface VerifyHubCandidatesOptions {
   cache?: FlightOffersCache | null;
   warn?: (message: string) => void;
   onDetailedOffers?: (trace: DetailedOfferTrace) => void;
+  throwOnAllFailures?: boolean;
 }
 
 export interface DetailedOfferTrace {
@@ -566,7 +567,12 @@ export async function verifyHubCandidates(
       createDetailedVerificationFailure(airportCode, message, cause),
     );
 
-  if (candidates.length > 0 && verifiedRoutes.length === 0 && failures.length === candidates.length) {
+  if (
+    options.throwOnAllFailures !== false &&
+    candidates.length > 0 &&
+    verifiedRoutes.length === 0 &&
+    failures.length === candidates.length
+  ) {
     throw new FatalSearchStageError(
       "detailed",
       failures.map((failure) => failure.cause),
