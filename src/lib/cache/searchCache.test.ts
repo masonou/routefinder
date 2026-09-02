@@ -35,7 +35,7 @@ test("identical normalized searches use the same versioned cache key", () => {
     adults: 1,
   });
 
-  assert.equal(firstKey, "routefinder:search:v12:BNE:LCA:2026-08-17:1:dynamic");
+  assert.equal(firstKey, "routefinder:search:v13:BNE:LCA:2026-08-17:1:dynamic");
   assert.equal(firstKey, secondKey);
 });
 
@@ -73,7 +73,7 @@ test("a cache miss runs the planner result loader and stores successful results 
   };
 
   const result = await runCachedSearch({
-    key: "routefinder:search:v12:BNE:LCA:2026-08-17:1:dynamic",
+    key: "routefinder:search:v13:BNE:LCA:2026-08-17:1:dynamic",
     cache,
     async load() {
       loadCalls += 1;
@@ -91,7 +91,7 @@ test("an unconfigured cache falls back to an uncached planner result", async () 
   let loadCalls = 0;
 
   const result = await runCachedSearch({
-    key: "routefinder:search:v12:BNE:LCA:2026-08-17:1:dynamic",
+    key: "routefinder:search:v13:BNE:LCA:2026-08-17:1:dynamic",
     cache: null,
     async load() {
       loadCalls += 1;
@@ -116,7 +116,7 @@ test("a cache hit returns immediately without running the planner result loader"
   };
 
   const result = await runCachedSearch({
-    key: "routefinder:search:v12:BNE:LCA:2026-08-17:1:dynamic",
+    key: "routefinder:search:v13:BNE:LCA:2026-08-17:1:dynamic",
     cache,
     async load() {
       loadCalls += 1;
@@ -141,7 +141,7 @@ test("empty search results use the short cache TTL", async () => {
   };
 
   await runCachedSearch({
-    key: "routefinder:search:v12:BNE:LCA:2026-08-17:1:dynamic",
+    key: "routefinder:search:v13:BNE:LCA:2026-08-17:1:dynamic",
     cache,
     async load() {
       return emptyResult;
@@ -165,7 +165,7 @@ test("failed planner searches are not cached", async () => {
   await assert.rejects(
     () =>
       runCachedSearch({
-        key: "routefinder:search:v12:BNE:LCA:2026-08-17:1:dynamic",
+        key: "routefinder:search:v13:BNE:LCA:2026-08-17:1:dynamic",
         cache,
         async load() {
           throw new Error("Planner failed.");
@@ -186,7 +186,7 @@ test("Redis read failures fall back to the planner without exposing details", as
   };
 
   const result = await runCachedSearch({
-    key: "routefinder:search:v12:BNE:LCA:2026-08-17:1:dynamic",
+    key: "routefinder:search:v13:BNE:LCA:2026-08-17:1:dynamic",
     cache,
     async load() {
       return resultWithItineraries;
@@ -213,7 +213,7 @@ test("Redis write failures still return the fresh planner result", async () => {
   };
 
   const result = await runCachedSearch({
-    key: "routefinder:search:v12:BNE:LCA:2026-08-17:1:dynamic",
+    key: "routefinder:search:v13:BNE:LCA:2026-08-17:1:dynamic",
     cache,
     async load() {
       return resultWithItineraries;

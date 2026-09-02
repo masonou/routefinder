@@ -35,15 +35,15 @@ const bangkok: ValidatedHubCandidate = {
 
 test("two-stop eligibility is limited to long routes with portfolio space", () => {
   assert.deepEqual(
-    shouldExploreTwoStopovers({ directDistanceKm: 3_000, oneStopAdventureCount: 0 }),
+    shouldExploreTwoStopovers({ directDistanceKm: 3_000, cleanOneStopAdventureCount: 0 }),
     { eligible: false, slotsNeeded: 3, reason: "short_distance" },
   );
   assert.deepEqual(
-    shouldExploreTwoStopovers({ directDistanceKm: 10_000, oneStopAdventureCount: 1 }),
+    shouldExploreTwoStopovers({ directDistanceKm: 10_000, cleanOneStopAdventureCount: 1 }),
     { eligible: true, slotsNeeded: 2, reason: "eligible" },
   );
   assert.deepEqual(
-    shouldExploreTwoStopovers({ directDistanceKm: 10_000, oneStopAdventureCount: 3 }),
+    shouldExploreTwoStopovers({ directDistanceKm: 10_000, cleanOneStopAdventureCount: 3 }),
     { eligible: false, slotsNeeded: 0, reason: "portfolio_full" },
   );
 });

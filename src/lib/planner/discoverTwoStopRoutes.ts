@@ -50,7 +50,7 @@ type WarningFunction = (message: string) => void;
 
 export interface TwoStopEligibilityInput {
   directDistanceKm: number;
-  oneStopAdventureCount: number;
+  cleanOneStopAdventureCount: number;
 }
 
 export interface TwoStopEligibility {
@@ -62,13 +62,13 @@ export interface TwoStopEligibility {
 /** Kept deliberately small and transparent for the V1 launch. */
 export function shouldExploreTwoStopovers({
   directDistanceKm,
-  oneStopAdventureCount,
+  cleanOneStopAdventureCount,
 }: TwoStopEligibilityInput): TwoStopEligibility {
-  const slotsNeeded = Math.max(0, 3 - oneStopAdventureCount);
+  const slotsNeeded = Math.max(0, 3 - cleanOneStopAdventureCount);
   if (directDistanceKm < TWO_STOP_MIN_DIRECT_DISTANCE_KM) {
     return { eligible: false, slotsNeeded, reason: "short_distance" };
   }
-  if (oneStopAdventureCount >= 3) {
+  if (cleanOneStopAdventureCount >= 3) {
     return { eligible: false, slotsNeeded: 0, reason: "portfolio_full" };
   }
   return { eligible: true, slotsNeeded, reason: "eligible" };

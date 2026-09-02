@@ -44,6 +44,10 @@ import { addCalendarDays, enumerateDateWindow } from "../utils/dateWindow.ts";
 import { discoverDirectItinerary } from "./discoverDirectRoute.ts";
 import { FatalSearchStageError } from "./fatalStageFailure.ts";
 import {
+  assembleDefaultAdventurePortfolio,
+  partitionOneStopAdventures,
+} from "./adventurePortfolio.ts";
+import {
   discoverTwoStopRoutes,
   observedConnectionsByH1,
   shouldExploreTwoStopovers,
@@ -434,7 +438,8 @@ export async function searchDynamicRoutes(
 
   // The one-stop portfolio is finalized before the optional two-stop branch is
   // considered. Its candidate limits, scoring, and ordering remain untouched.
-  const adventures = orderAdventureItineraries(rankVerifiedRoutes(verifiedRoutes).verifiedRoutes);
+  const oneStopAdventures = orderAdventureItineraries(rankVerifiedRoutes(verifiedRoutes).verifiedRoutes);
+  const oneStopPortfolio = partitionOneStopAdventures(oneStopAdventures);
   const originAirport = findAirportByCode(request.origin);
   const destinationAirport = findAirportByCode(request.destination);
   const directDistanceKm = originAirport && destinationAirport
@@ -442,7 +447,7 @@ export async function searchDynamicRoutes(
     : 0;
   const twoStopEligibility = shouldExploreTwoStopovers({
     directDistanceKm,
-    oneStopAdventureCount: adventures.length,
+    cleanOneStopAdventureCount: oneStopPortfolio.clean.length,
   });
   let twoStopAdventures: Itinerary[] = [];
   if (twoStopEligibility.eligible) {
@@ -482,5 +487,9 @@ export async function searchDynamicRoutes(
     }
   }
   const directItinerary = await directItineraryPromise;
-  return appendDirectBaseline([...adventures, ...twoStopAdventures], directItinerary);
+  const portfolio = assembleDefaultAdventurePortfolio({
+    oneStopAdventures,
+    twoStopAdventures,
+  });
+  return appendDirectBaseline(portfolio.itineraries, directItinerary);
 }

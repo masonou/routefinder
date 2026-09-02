@@ -29,6 +29,10 @@ import {
   observedConnectionsByH1,
   shouldExploreTwoStopovers,
 } from "../src/lib/planner/discoverTwoStopRoutes.ts";
+import {
+  assembleDefaultAdventurePortfolio,
+  partitionOneStopAdventures,
+} from "../src/lib/planner/adventurePortfolio.ts";
 import { validateHubCandidates } from "../src/lib/planner/validateHubCandidates.ts";
 import {
   rankVerifiedRoutes,
@@ -362,9 +366,10 @@ async function run(): Promise<void> {
     : { verifiedRoutes: [], rejected: [], detailedLookups: [], attemptedCandidates: 0 };
   const allVerifiedRoutes = [...cleanDetailed.verifiedRoutes, ...fallbackDetailed.verifiedRoutes];
   const finalAdventures = orderAdventureItineraries(rankVerifiedRoutes(allVerifiedRoutes).verifiedRoutes);
+  const oneStopPortfolio = partitionOneStopAdventures(finalAdventures);
   const twoStopEligibility = shouldExploreTwoStopovers({
     directDistanceKm,
-    oneStopAdventureCount: finalAdventures.length,
+    cleanOneStopAdventureCount: oneStopPortfolio.clean.length,
   });
   const rejected = new Map(
     [...cleanDetailed.rejected, ...fallbackDetailed.rejected]
@@ -405,9 +410,10 @@ async function run(): Promise<void> {
   } else {
     console.log("FALLBACK\nskipped: 3 clean adventures already verified");
   }
-  console.log(`FINAL\nclean: ${cleanDetailed.verifiedRoutes.length}\nfallback: ${fallbackDetailed.verifiedRoutes.length}\ntotal adventures: ${finalAdventures.length}`);
+  console.log("\nONE-STOP PORTFOLIO QUALITY");
+  console.log(`clean one-stop: ${oneStopPortfolio.clean.length}\nconnecting one-stop: ${oneStopPortfolio.connecting.length}`);
   console.log("\nTWO-STOP ELIGIBILITY");
-  console.log(`direct distance: ${directDistanceKm} km\none-stop count: ${finalAdventures.length}\nslots needed: ${twoStopEligibility.slotsNeeded}\neligible: ${twoStopEligibility.eligible ? "yes" : "no"}\nreason: ${twoStopEligibility.reason}`);
+  console.log(`direct distance: ${directDistanceKm} km\nclean slots filled: ${oneStopPortfolio.clean.length} / 3\ntwo-stop slots requested: ${twoStopEligibility.slotsNeeded}\neligible: ${twoStopEligibility.eligible ? "yes" : "no"}\nreason: ${twoStopEligibility.reason}`);
   const twoStop = twoStopEligibility.eligible
     ? await discoverTwoStopRoutes(
       {
@@ -456,6 +462,13 @@ async function run(): Promise<void> {
       scoreStay: twoStop.scoreBreakdowns[index]?.score.stay,
     })));
   }
+  const defaultPortfolio = assembleDefaultAdventurePortfolio({
+    oneStopAdventures: finalAdventures,
+    twoStopAdventures: twoStop?.itineraries ?? [],
+  });
+  console.log("\nFINAL DEFAULT PORTFOLIO");
+  console.log(`clean one-stop: ${defaultPortfolio.cleanOneStop.length}\ntwo-stop: ${defaultPortfolio.twoStop.length}\nconnecting one-stop: ${defaultPortfolio.connectingOneStop.length}\ntotal adventures: ${defaultPortfolio.itineraries.length}`);
+  console.log(`SUPPRESSED FROM DEFAULT\nconnecting one-stop: ${defaultPortfolio.suppressedConnectingOneStop.length}`);
   const exploreHits = explore.filter((result) => result.cacheStatus === "HIT").length;
   const calendarLookups = [
     ...cleanValidation.calendarLookups,

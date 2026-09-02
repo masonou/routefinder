@@ -137,6 +137,7 @@ async function runFallbackScenario(cleanSuccesses: number, fallbackStops = 1) {
   let fallbackCalendarCalls = 0;
   let cleanOnwardCalls = 0;
   let fallbackDetailedCalls = 0;
+  let twoStopExploreCalls = 0;
 
   const itineraries = await searchDynamicRoutes(request, {
     directDestinationsCache: null,
@@ -144,6 +145,7 @@ async function runFallbackScenario(cleanSuccesses: number, fallbackStops = 1) {
     flightOffersCache: null,
     directDestinationsProvider: {
       async getDirectDestinations(input) {
+        if (input.origin !== request.origin) twoStopExploreCalls += 1;
         return fallbackScenarioHubs.map((hub) => ({ ...hub, outboundDate: input.departureDate }));
       },
     },
@@ -207,6 +209,7 @@ async function runFallbackScenario(cleanSuccesses: number, fallbackStops = 1) {
     fallbackCalendarCalls,
     cleanOnwardCalls,
     fallbackDetailedCalls,
+    twoStopExploreCalls,
     cleanFailedHubs,
     fallbackDetailedHubs,
   };
@@ -349,6 +352,7 @@ test("three clean verified adventures skip fallback Calendar and detailed work",
   assert.ok(result.cleanOnwardCalls >= 3);
   assert.equal(result.fallbackCalendarCalls, 0);
   assert.equal(result.fallbackDetailedCalls, 0);
+  assert.equal(result.twoStopExploreCalls, 0);
 });
 
 test("fallback fills slots left by clean detailed failures and can retry a failed clean hub", async () => {
@@ -372,6 +376,7 @@ test("zero clean detailed adventures pursue fallback routes without manufacturin
   assert.ok(result.cleanOnwardCalls >= 3);
   assert.equal(result.fallbackCalendarCalls, 4);
   assert.ok(result.fallbackDetailedCalls > 0);
+  assert.ok(result.twoStopExploreCalls > 0);
 });
 
 test("fallback rejections leave the successful clean portfolio intact", async () => {
