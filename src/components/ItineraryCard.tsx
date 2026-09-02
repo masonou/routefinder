@@ -117,24 +117,26 @@ export function ItineraryCard({
       <div className="grid gap-7 lg:grid-cols-[minmax(0,1fr)_12rem] lg:gap-8">
         <div className="min-w-0">
           <p className="text-xs font-semibold uppercase tracking-[0.14em] text-blue-700">
-            {stopovers.length === 2 ? "Two-stop adventure" : "Stopover adventure"}
+            {stopovers.length === 2
+              ? "Two-stop adventure"
+              : "Stopover adventure"}
           </p>
           <div className="mt-3 space-y-1">
             {stopovers.map((stopover, index) =>
               index === 0 ? (
                 <h3
                   key={`${stopover.airportCode}-${index}`}
-                  className="text-xl font-semibold tracking-tight text-slate-950 sm:text-2xl"
+                  className="text-lg font-semibold tracking-tight text-slate-950 sm:text-xl"
                 >
                   {getStopoverHeadline(stopover)}
                 </h3>
               ) : (
-                <p
+                <h3
                   key={`${stopover.airportCode}-${index}`}
-                  className="text-base font-semibold text-slate-800"
+                  className="text-lg font-semibold tracking-tight text-slate-950 sm:text-xl"
                 >
                   {getStopoverHeadline(stopover)}
-                </p>
+                </h3>
               ),
             )}
           </div>
