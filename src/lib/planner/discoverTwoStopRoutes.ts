@@ -23,6 +23,7 @@ import {
   MAX_H2_PER_H1,
   MAX_TWO_STOP_PAIR_ATTEMPTS,
   MAX_TWO_STOP_H1_CANDIDATES,
+  MAX_TWO_STOP_RESULTS,
   MAX_TWO_STOP_STAY_NIGHTS,
   EXTREME_DURATION_MIN_EXTRA_MINUTES,
   EXTREME_DURATION_RATIO,
@@ -55,7 +56,7 @@ export interface TwoStopEligibilityInput {
 
 export interface TwoStopEligibility {
   eligible: boolean;
-  slotsNeeded: number;
+  targetResults: number;
   reason: "short_distance" | "portfolio_full" | "eligible";
 }
 
@@ -64,14 +65,13 @@ export function shouldExploreTwoStopovers({
   directDistanceKm,
   cleanOneStopAdventureCount,
 }: TwoStopEligibilityInput): TwoStopEligibility {
-  const slotsNeeded = Math.max(0, 3 - cleanOneStopAdventureCount);
   if (directDistanceKm < TWO_STOP_MIN_DIRECT_DISTANCE_KM) {
-    return { eligible: false, slotsNeeded, reason: "short_distance" };
+    return { eligible: false, targetResults: 0, reason: "short_distance" };
   }
   if (cleanOneStopAdventureCount >= 3) {
-    return { eligible: false, slotsNeeded: 0, reason: "portfolio_full" };
+    return { eligible: false, targetResults: 0, reason: "portfolio_full" };
   }
-  return { eligible: true, slotsNeeded, reason: "eligible" };
+  return { eligible: true, targetResults: MAX_TWO_STOP_RESULTS, reason: "eligible" };
 }
 
 export interface ObservedConnectionAirport {
@@ -147,7 +147,7 @@ export interface DiscoverTwoStopRoutesInput {
   adults: number;
   h1Candidates: ValidatedHubCandidate[];
   observedConnections: Map<string, ObservedConnectionAirport[]>;
-  slotsNeeded: number;
+  targetResults: number;
 }
 
 export interface DiscoverTwoStopRoutesDependencies {
@@ -367,7 +367,7 @@ export async function discoverTwoStopRoutes(
   const destination = input.destination.trim().toUpperCase();
 
   for (const h1 of h1Candidates) {
-    if (verified.length >= input.slotsNeeded || attemptedPairs >= MAX_TWO_STOP_PAIR_ATTEMPTS) break;
+    if (verified.length >= input.targetResults || attemptedPairs >= MAX_TWO_STOP_PAIR_ATTEMPTS) break;
     try {
       const firstResult = await runCachedFlightOffers({
         key: buildFlightOffersCacheKey({ origin, destination: h1.airportCode, departureDate: h1.firstLegDepartureDate, adults: input.adults }),
@@ -396,7 +396,7 @@ export async function discoverTwoStopRoutes(
       });
       h2Candidates.push({ h1: h1.airportCode, candidates: rankedH2 });
       for (const h2 of rankedH2) {
-        if (verified.length >= input.slotsNeeded || attemptedPairs >= MAX_TWO_STOP_PAIR_ATTEMPTS) break;
+        if (verified.length >= input.targetResults || attemptedPairs >= MAX_TWO_STOP_PAIR_ATTEMPTS) break;
         attemptedPairs += 1;
         const middleCalendar = await runCachedFlightCalendar({
           key: buildFlightCalendarCacheKey({ origin: h1.airportCode, destination: h2.airportCode, startDate: addCalendarDays(h1ArrivalDate, MIN_TWO_STOP_STAY_NIGHTS), endDate: addCalendarDays(h1ArrivalDate, MAX_TWO_STOP_STAY_NIGHTS), stopPolicy: "nonstop" }),
@@ -442,7 +442,7 @@ export async function discoverTwoStopRoutes(
       failures.push(`${h1.airportCode}: ${message}`);
     }
   }
-  const rankedRoutes = scoreRoutes(verified).slice(0, input.slotsNeeded);
+  const rankedRoutes = scoreRoutes(verified).slice(0, input.targetResults);
   return {
     itineraries: rankedRoutes.map((route) => createItinerary({
       origin, destination, score: route.score,

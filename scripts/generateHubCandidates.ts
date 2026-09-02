@@ -30,10 +30,7 @@ import {
   observedConnectionsByH1,
   shouldExploreTwoStopovers,
 } from "../src/lib/planner/discoverTwoStopRoutes.ts";
-import {
-  assembleDefaultAdventurePortfolio,
-  partitionOneStopAdventures,
-} from "../src/lib/planner/adventurePortfolio.ts";
+import { partitionOneStopAdventures } from "../src/lib/planner/adventurePortfolio.ts";
 import { validateHubCandidates } from "../src/lib/planner/validateHubCandidates.ts";
 import {
   rankVerifiedRoutes,
@@ -428,7 +425,7 @@ async function run(): Promise<void> {
   console.log("\nONE-STOP PORTFOLIO QUALITY");
   console.log(`clean one-stop: ${oneStopPortfolio.clean.length}\nconnecting one-stop: ${oneStopPortfolio.connecting.length}`);
   console.log("\nTWO-STOP ELIGIBILITY");
-  console.log(`direct distance: ${directDistanceKm} km\nclean slots filled: ${oneStopPortfolio.clean.length} / 3\ntwo-stop slots requested: ${twoStopEligibility.slotsNeeded}\neligible: ${twoStopEligibility.eligible ? "yes" : "no"}\nreason: ${twoStopEligibility.reason}`);
+  console.log(`direct distance: ${directDistanceKm} km\nclean one-stop count: ${oneStopPortfolio.clean.length}\ntwo-stop target: ${twoStopEligibility.targetResults}\neligible: ${twoStopEligibility.eligible ? "yes" : "no"}\nreason: ${twoStopEligibility.reason}`);
   const twoStop = twoStopEligibility.eligible
     ? await discoverTwoStopRoutes(
       {
@@ -440,7 +437,7 @@ async function run(): Promise<void> {
           ...(fallbackValidation?.validatedCandidates ?? []),
         ],
         observedConnections: observedConnectionsByH1(offerTraces),
-        slotsNeeded: twoStopEligibility.slotsNeeded,
+        targetResults: twoStopEligibility.targetResults,
       },
       {
         directDestinationsProvider: searchApiDirectDestinationsProvider,
@@ -477,13 +474,9 @@ async function run(): Promise<void> {
       scoreStay: twoStop.scoreBreakdowns[index]?.score.stay,
     })));
   }
-  const defaultPortfolio = assembleDefaultAdventurePortfolio({
-    oneStopAdventures: finalAdventures,
-    twoStopAdventures: twoStop?.itineraries ?? [],
-  });
-  console.log("\nFINAL DEFAULT PORTFOLIO");
-  console.log(`clean one-stop: ${defaultPortfolio.cleanOneStop.length}\ntwo-stop: ${defaultPortfolio.twoStop.length}\nconnecting one-stop: ${defaultPortfolio.connectingOneStop.length}\ntotal adventures: ${defaultPortfolio.itineraries.length}`);
-  console.log(`SUPPRESSED FROM DEFAULT\nconnecting one-stop: ${defaultPortfolio.suppressedConnectingOneStop.length}`);
+  console.log("\nFINAL RETURNED RESULTS");
+  console.log(`direct: not evaluated by hubs:debug\none-stop clean: ${oneStopPortfolio.clean.length}\none-stop connecting: ${oneStopPortfolio.connecting.length}\none-stop total: ${finalAdventures.length}\ntwo-stop: ${twoStop?.itineraries.length ?? 0}\ntotal itineraries returned: ${finalAdventures.length + (twoStop?.itineraries.length ?? 0)}`);
+  console.log(`TWO-STOP DISCOVERY\neligible: ${twoStopEligibility.eligible ? "yes" : "no"}\nverified: ${twoStop?.itineraries.length ?? 0} / ${twoStopEligibility.targetResults} target`);
   const exploreHits = explore.filter((result) => result.cacheStatus === "HIT").length;
   const calendarLookups = [
     ...cleanValidation.calendarLookups,

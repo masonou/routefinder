@@ -36,15 +36,15 @@ const bangkok: ValidatedHubCandidate = {
 test("two-stop eligibility is limited to long routes with portfolio space", () => {
   assert.deepEqual(
     shouldExploreTwoStopovers({ directDistanceKm: 3_000, cleanOneStopAdventureCount: 0 }),
-    { eligible: false, slotsNeeded: 3, reason: "short_distance" },
+    { eligible: false, targetResults: 0, reason: "short_distance" },
   );
   assert.deepEqual(
     shouldExploreTwoStopovers({ directDistanceKm: 10_000, cleanOneStopAdventureCount: 1 }),
-    { eligible: true, slotsNeeded: 2, reason: "eligible" },
+    { eligible: true, targetResults: 3, reason: "eligible" },
   );
   assert.deepEqual(
     shouldExploreTwoStopovers({ directDistanceKm: 10_000, cleanOneStopAdventureCount: 3 }),
-    { eligible: false, slotsNeeded: 0, reason: "portfolio_full" },
+    { eligible: false, targetResults: 0, reason: "portfolio_full" },
   );
 });
 
@@ -72,28 +72,33 @@ test("H2 discovery combines observed connections with Explore and excludes endpo
   assert.equal(evidence.get("BKK")?.[0]?.airportCode, "IST");
 });
 
-test("three verified nonstop legs produce a generic two-stop itinerary with local-date stays", async () => {
+test("three verified nonstop legs produce retained generic two-stop itineraries up to the category target", async () => {
   const result = await discoverTwoStopRoutes(
-    { origin: "BNE", destination: "LCA", adults: 1, h1Candidates: [bangkok], observedConnections: new Map(), slotsNeeded: 2 },
+    { origin: "BNE", destination: "LCA", adults: 1, h1Candidates: [bangkok], observedConnections: new Map(), targetResults: 3 },
     {
       directDestinationsCache: null, flightCalendarCache: null, flightOffersCache: null,
       directDestinationsProvider: { async getDirectDestinations() {
-        return [{ airportCode: "IST", city: "Istanbul", country: "Türkiye", latitude: 41.2753, longitude: 28.7519, outboundDate: "2026-09-04", indicativePrice: 180, currency: "EUR", flightDurationMinutes: 600 }];
+        return [
+          { airportCode: "IST", city: "Istanbul", country: "Türkiye", latitude: 41.2753, longitude: 28.7519, outboundDate: "2026-09-04", indicativePrice: 180, currency: "EUR", flightDurationMinutes: 600 },
+          { airportCode: "DOH", city: "Doha", country: "Qatar", latitude: 25.273056, longitude: 51.608056, outboundDate: "2026-09-04", indicativePrice: 190, currency: "EUR", flightDurationMinutes: 420 },
+          { airportCode: "KUL", city: "Kuala Lumpur", country: "Malaysia", latitude: 2.7456, longitude: 101.7099, outboundDate: "2026-09-04", indicativePrice: 200, currency: "EUR", flightDurationMinutes: 150 },
+        ];
       } },
       flightCalendarProvider: { async getFlightCalendar(input) {
         return [{ departureDate: input.departureWindow.start === "2026-09-03" ? "2026-09-04" : "2026-09-07", price: 100, currency: "EUR", hasFlights: true }];
       } },
       flightProvider: { name: "test", async searchOneWay(input) {
         if (input.origin === "BNE") return [offer("BNE", "BKK", "2026-09-01")];
-        if (input.origin === "BKK") return [offer("BKK", "IST", "2026-09-04")];
-        return [offer("IST", "LCA", "2026-09-07")];
+        if (input.origin === "BKK") return [offer("BKK", input.destination, "2026-09-04")];
+        return [offer(input.origin, "LCA", "2026-09-07")];
       } },
     },
   );
-  assert.equal(result.itineraries.length, 1);
+  assert.equal(result.itineraries.length, 3);
   const itinerary = result.itineraries[0];
   assert.equal(itinerary?.legs.length, 3);
   assert.deepEqual(itinerary?.legs.map((leg) => leg.stopoverAfter?.nights), [3, 3, undefined]);
   assert.equal(itinerary?.totalStops, 0);
   assert.equal(itinerary?.totalPrice.amount, 300);
+  assert.equal(new Set(result.itineraries.map((entry) => entry.legs[1]?.flight.destination)).size, 3);
 });

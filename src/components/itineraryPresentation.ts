@@ -58,6 +58,17 @@ export function partitionItineraries(itineraries: Itinerary[]): {
   return { directOptions, adventures: oneStopAdventures, oneStopAdventures, twoStopAdventures };
 }
 
+/** Initial expansion is presentation-only; all itineraries are already returned. */
+export function getInitialAdventureVisibility(
+  oneStopCount: number,
+  twoStopCount: number,
+): { oneStop: number; twoStop: number } {
+  if (oneStopCount > 0 && twoStopCount > 0) {
+    return { oneStop: Math.min(2, oneStopCount), twoStop: Math.min(1, twoStopCount) };
+  }
+  return { oneStop: Math.min(3, oneStopCount), twoStop: Math.min(3, twoStopCount) };
+}
+
 export function getStopoverHeadline(stopover: ItineraryStopover): string {
   return `${stopover.nights} ${stopover.nights === 1 ? "night" : "nights"} in ${getStopoverLocation(stopover)}`;
 }

@@ -6,7 +6,11 @@ import {
 } from "../cache/directDestinationsCache.ts";
 import type { FlightCalendarCache } from "../cache/flightCalendarCache.ts";
 import type { FlightOffersCache } from "../cache/flightOffersCache.ts";
-import { DEPARTURE_FLEX_DAYS, MAX_VERIFIED_HUBS } from "../constants/planner.ts";
+import {
+  DEPARTURE_FLEX_DAYS,
+  MAX_ONE_STOP_RESULTS,
+  MAX_VERIFIED_HUBS,
+} from "../constants/planner.ts";
 import {
   searchApiDirectDestinationsProvider,
   searchApiFlightCalendarProvider,
@@ -43,10 +47,7 @@ import type { TripRequest } from "../../types/trip.ts";
 import { addCalendarDays, enumerateDateWindow } from "../utils/dateWindow.ts";
 import { discoverDirectItinerary } from "./discoverDirectRoute.ts";
 import { FatalSearchStageError } from "./fatalStageFailure.ts";
-import {
-  assembleDefaultAdventurePortfolio,
-  partitionOneStopAdventures,
-} from "./adventurePortfolio.ts";
+import { partitionOneStopAdventures } from "./adventurePortfolio.ts";
 import {
   discoverTwoStopRoutes,
   observedConnectionsByH1,
@@ -121,12 +122,12 @@ export function orderAdventureItineraries(routes: VerifiedHubRoute[]): Itinerary
   // Diversity selection is intentionally run per product category so its
   // score-based sort cannot let a connecting route leapfrog a clean adventure.
   return [
-    ...selectDiverseItineraries(clean.map(toDynamicItinerary), MAX_VERIFIED_HUBS),
+    ...selectDiverseItineraries(clean.map(toDynamicItinerary), MAX_ONE_STOP_RESULTS),
     ...selectDiverseItineraries(
       connectingFallback.map(toDynamicItinerary),
-      MAX_VERIFIED_HUBS,
+      MAX_ONE_STOP_RESULTS,
     ),
-  ].slice(0, MAX_VERIFIED_HUBS);
+  ].slice(0, MAX_ONE_STOP_RESULTS);
 }
 
 function throwIfAllStageRequestsFailed(
@@ -466,7 +467,7 @@ export async function searchDynamicRoutes(
           adults: request.adults ?? 1,
           h1Candidates,
           observedConnections: observedConnectionsByH1(detailedTraces),
-          slotsNeeded: twoStopEligibility.slotsNeeded,
+          targetResults: twoStopEligibility.targetResults,
         },
         {
           directDestinationsProvider:
@@ -487,9 +488,7 @@ export async function searchDynamicRoutes(
     }
   }
   const directItinerary = await directItineraryPromise;
-  const portfolio = assembleDefaultAdventurePortfolio({
-    oneStopAdventures,
-    twoStopAdventures,
-  });
-  return appendDirectBaseline(portfolio.itineraries, directItinerary);
+  // Result categories are independent: a verified two-stop route never
+  // displaces a verified one-stop route merely to satisfy a combined cap.
+  return appendDirectBaseline([...oneStopAdventures, ...twoStopAdventures], directItinerary);
 }

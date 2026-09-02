@@ -8,6 +8,7 @@ import {
   getConnectionSummary,
   getDirectPriceComparison,
   getFlightConnectionLabel,
+  getInitialAdventureVisibility,
   getItineraryTimeline,
   getStopoverHeadline,
   partitionItineraries,
@@ -147,4 +148,14 @@ test("the shared Kiwi action retains one affiliate payload for each selected iti
     currency: "EUR",
     hubStayNights: 4,
   });
+});
+
+test("initial result expansion remains curated when both adventure categories exist", () => {
+  assert.deepEqual(getInitialAdventureVisibility(3, 3), { oneStop: 2, twoStop: 1 });
+  assert.deepEqual(getInitialAdventureVisibility(2, 1), { oneStop: 2, twoStop: 1 });
+});
+
+test("a single returned adventure category is fully visible up to three cards", () => {
+  assert.deepEqual(getInitialAdventureVisibility(3, 0), { oneStop: 3, twoStop: 0 });
+  assert.deepEqual(getInitialAdventureVisibility(0, 3), { oneStop: 0, twoStop: 3 });
 });

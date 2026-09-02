@@ -16,7 +16,11 @@ import {
 } from "../lib/analytics/events";
 import { DirectItineraryCard, ItineraryCard } from "./ItineraryCard";
 import { SearchLoadingState } from "./SearchLoadingState";
-import { isDirectBaseline, partitionItineraries } from "./itineraryPresentation";
+import {
+  getInitialAdventureVisibility,
+  isDirectBaseline,
+  partitionItineraries,
+} from "./itineraryPresentation";
 import { getResultsViewState } from "./resultsViewState";
 import { formatSearchFailureReference } from "./searchFailureReference";
 
@@ -136,6 +140,8 @@ export function ResultsClient({ request }: ResultsClientProps) {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [failure, setFailure] = useState<SearchFailureState | null>(null);
   const [retryToken, setRetryToken] = useState(0);
+  const [showAllOneStop, setShowAllOneStop] = useState(false);
+  const [showAllTwoStop, setShowAllTwoStop] = useState(false);
 
   useEffect(() => {
     const abortController = new AbortController();
@@ -144,6 +150,8 @@ export function ResultsClient({ request }: ResultsClientProps) {
       setErrorMessage(null);
       setFailure(null);
       setItineraries(null);
+      setShowAllOneStop(false);
+      setShowAllTwoStop(false);
 
       try {
         const response = await fetch("/api/search", {
@@ -262,6 +270,18 @@ export function ResultsClient({ request }: ResultsClientProps) {
 
   const { directOptions, oneStopAdventures, twoStopAdventures } = partitionItineraries(itineraries ?? []);
   const directBaseline = directOptions[0]?.itinerary;
+  const initialVisibility = getInitialAdventureVisibility(
+    oneStopAdventures.length,
+    twoStopAdventures.length,
+  );
+  const visibleOneStop = showAllOneStop
+    ? oneStopAdventures
+    : oneStopAdventures.slice(0, initialVisibility.oneStop);
+  const visibleTwoStop = showAllTwoStop
+    ? twoStopAdventures
+    : twoStopAdventures.slice(0, initialVisibility.twoStop);
+  const hiddenOneStopCount = oneStopAdventures.length - visibleOneStop.length;
+  const hiddenTwoStopCount = twoStopAdventures.length - visibleTwoStop.length;
 
   return (
     <div className="space-y-10">
@@ -287,7 +307,7 @@ export function ResultsClient({ request }: ResultsClientProps) {
             </p>
           </div>
           <div className="space-y-4">
-            {oneStopAdventures.map(({ itinerary, rank }) => (
+            {visibleOneStop.map(({ itinerary, rank }) => (
               <ItineraryCard
                 key={itinerary.id}
                 itinerary={itinerary}
@@ -296,6 +316,15 @@ export function ResultsClient({ request }: ResultsClientProps) {
               />
             ))}
           </div>
+          {hiddenOneStopCount > 0 ? (
+            <button
+              type="button"
+              onClick={() => setShowAllOneStop(true)}
+              className="min-h-11 w-full rounded-lg border border-slate-300 px-4 text-sm font-semibold text-slate-900 outline-none hover:border-slate-400 focus-visible:ring-2 focus-visible:ring-blue-700 sm:w-auto"
+            >
+              {hiddenOneStopCount === 1 ? "Show 1 more" : "Show more"}
+            </button>
+          ) : null}
         </section>
       ) : null}
 
@@ -310,7 +339,7 @@ export function ResultsClient({ request }: ResultsClientProps) {
             </p>
           </div>
           <div className="space-y-4">
-            {twoStopAdventures.map(({ itinerary, rank }) => (
+            {visibleTwoStop.map(({ itinerary, rank }) => (
               <ItineraryCard
                 key={itinerary.id}
                 itinerary={itinerary}
@@ -319,6 +348,15 @@ export function ResultsClient({ request }: ResultsClientProps) {
               />
             ))}
           </div>
+          {hiddenTwoStopCount > 0 ? (
+            <button
+              type="button"
+              onClick={() => setShowAllTwoStop(true)}
+              className="min-h-11 w-full rounded-lg border border-slate-300 px-4 text-sm font-semibold text-slate-900 outline-none hover:border-slate-400 focus-visible:ring-2 focus-visible:ring-blue-700 sm:w-auto"
+            >
+              {hiddenTwoStopCount === 1 ? "Show 1 more" : "Show more"}
+            </button>
+          ) : null}
         </section>
       ) : null}
 

@@ -14,6 +14,7 @@ export const MAX_DEPARTURE_VARIANTS_PER_HUB = 2;
 export const MAX_VALIDATED_HUBS = 3;
 export const CALENDAR_VALIDATION_CONCURRENCY = 3;
 export const MAX_VERIFIED_HUBS = 3;
+export const MAX_ONE_STOP_RESULTS = 3;
 export const DETAILED_VERIFICATION_CONCURRENCY = 2;
 
 // Two-stop discovery is a bounded supplementary branch. These values deliberately
@@ -23,6 +24,7 @@ export const TWO_STOP_MAX_PATH_DETOUR_RATIO = 2.0;
 export const MAX_TWO_STOP_H1_CANDIDATES = 2;
 export const MAX_H2_PER_H1 = 3;
 export const MAX_TWO_STOP_PAIR_ATTEMPTS = 4;
+export const MAX_TWO_STOP_RESULTS = 3;
 export const MIN_TWO_STOP_STAY_NIGHTS = 2;
 export const MAX_TWO_STOP_STAY_NIGHTS = 4;
 export const TARGET_TWO_STOP_STAY_NIGHTS = 3;
