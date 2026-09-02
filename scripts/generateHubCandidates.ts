@@ -24,6 +24,11 @@ import {
   orderAdventureItineraries,
   verifyCandidatesUntilFilled,
 } from "../src/lib/planner/searchDynamicRoutes.ts";
+import {
+  discoverTwoStopRoutes,
+  observedConnectionsByH1,
+  shouldExploreTwoStopovers,
+} from "../src/lib/planner/discoverTwoStopRoutes.ts";
 import { validateHubCandidates } from "../src/lib/planner/validateHubCandidates.ts";
 import {
   rankVerifiedRoutes,
@@ -357,6 +362,10 @@ async function run(): Promise<void> {
     : { verifiedRoutes: [], rejected: [], detailedLookups: [], attemptedCandidates: 0 };
   const allVerifiedRoutes = [...cleanDetailed.verifiedRoutes, ...fallbackDetailed.verifiedRoutes];
   const finalAdventures = orderAdventureItineraries(rankVerifiedRoutes(allVerifiedRoutes).verifiedRoutes);
+  const twoStopEligibility = shouldExploreTwoStopovers({
+    directDistanceKm,
+    oneStopAdventureCount: finalAdventures.length,
+  });
   const rejected = new Map(
     [...cleanDetailed.rejected, ...fallbackDetailed.rejected]
       .map((entry) => [entry.airportCode, entry.reason]),
@@ -397,6 +406,56 @@ async function run(): Promise<void> {
     console.log("FALLBACK\nskipped: 3 clean adventures already verified");
   }
   console.log(`FINAL\nclean: ${cleanDetailed.verifiedRoutes.length}\nfallback: ${fallbackDetailed.verifiedRoutes.length}\ntotal adventures: ${finalAdventures.length}`);
+  console.log("\nTWO-STOP ELIGIBILITY");
+  console.log(`direct distance: ${directDistanceKm} km\none-stop count: ${finalAdventures.length}\nslots needed: ${twoStopEligibility.slotsNeeded}\neligible: ${twoStopEligibility.eligible ? "yes" : "no"}\nreason: ${twoStopEligibility.reason}`);
+  const twoStop = twoStopEligibility.eligible
+    ? await discoverTwoStopRoutes(
+      {
+        origin,
+        destination,
+        adults: 1,
+        h1Candidates: [
+          ...cleanValidation.validatedCandidates,
+          ...(fallbackValidation?.validatedCandidates ?? []),
+        ],
+        observedConnections: observedConnectionsByH1(offerTraces),
+        slotsNeeded: twoStopEligibility.slotsNeeded,
+      },
+      {
+        directDestinationsProvider: searchApiDirectDestinationsProvider,
+        flightCalendarProvider: diagnosticProvider,
+        flightProvider: diagnosticProvider,
+      },
+    )
+    : undefined;
+  if (twoStop) {
+    table("H1 CANDIDATES", twoStop.h1Candidates.map((candidate) => ({
+      airport: candidate.airportCode, date: candidate.firstLegDepartureDate,
+      validationScore: candidate.validationScore,
+    })));
+    table("H2 CANDIDATES", twoStop.h2Candidates.flatMap(({ h1, candidates }) => candidates.map((candidate) => ({
+      h1, airport: candidate.airportCode, source: candidate.source,
+      combinedDetour: candidate.combinedPathDetourRatio,
+      indicativePrice: candidate.indicativePrice ?? "",
+      candidateScore: candidate.candidateScore,
+    }))));
+    table("PAIR VALIDATION", twoStop.itineraries.map((itinerary) => ({
+      route: itinerary.legs.map((leg) => `${leg.flight.origin} → ${leg.flight.destination}`).join(" | "),
+      h1Stay: itinerary.legs[0]?.stopoverAfter?.nights,
+      h2Stay: itinerary.legs[1]?.stopoverAfter?.nights,
+      allNonstop: itinerary.totalStops === 0 ? "yes" : "no",
+    })));
+    table("TWO-STOP VERIFIED", twoStop.itineraries.map((itinerary, index) => ({
+      id: itinerary.id, price: formatMoney(itinerary.totalPrice.amount, itinerary.totalPrice.currency),
+      flying: formatDuration(itinerary.totalFlightDurationMinutes),
+      score: twoStop.scoreBreakdowns[index]?.score.final,
+      scorePrice: twoStop.scoreBreakdowns[index]?.score.price,
+      scoreDuration: twoStop.scoreBreakdowns[index]?.score.duration,
+      scoreStops: twoStop.scoreBreakdowns[index]?.score.stops,
+      scoreDetour: twoStop.scoreBreakdowns[index]?.score.detour,
+      scoreStay: twoStop.scoreBreakdowns[index]?.score.stay,
+    })));
+  }
   const exploreHits = explore.filter((result) => result.cacheStatus === "HIT").length;
   const calendarLookups = [
     ...cleanValidation.calendarLookups,
@@ -412,6 +471,13 @@ async function run(): Promise<void> {
   const detailedMisses = detailedLookups.filter((lookup) => lookup.cacheStatus === "MISS").length;
   console.log("\nAPI-CALL ACCOUNTING");
   console.log(`Live SearchAPI calls: Explore ${explore.length - exploreHits}; Calendar ${calendarMisses} (${calendarHits} cache hits; failures have no cache status); Detailed ${detailedMisses} (${detailedHits} cache hits); total ${explore.length - exploreHits + calendarMisses + detailedMisses}.`);
+  if (twoStop) {
+    const twoStopLive = twoStop.api.h1ExploreCalls + twoStop.api.firstLegDetailedCalls +
+      twoStop.api.middleCalendarCalls + twoStop.api.middleDetailedCalls +
+      twoStop.api.finalCalendarCalls + twoStop.api.finalDetailedCalls;
+    console.log(`Additional two-stop calls: Explore ${twoStop.api.h1ExploreCalls}; first-leg detailed ${twoStop.api.firstLegDetailedCalls}; H1→H2 Calendar ${twoStop.api.middleCalendarCalls}; H1→H2 detailed ${twoStop.api.middleDetailedCalls}; H2→destination Calendar ${twoStop.api.finalCalendarCalls}; H2→destination detailed ${twoStop.api.finalDetailedCalls}; cache hits ${twoStop.api.cacheHits}; total ${twoStopLive}.`);
+    console.log(`Total live calls: ${explore.length - exploreHits + calendarMisses + detailedMisses + twoStopLive}.`);
+  }
   console.log("Counterfactual cutoff and budget analysis above was local only: zero additional Calendar or Detailed calls.");
 }
 

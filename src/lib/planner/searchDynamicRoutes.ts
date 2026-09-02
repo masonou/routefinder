@@ -34,6 +34,7 @@ import {
   type DetailedVerificationFailure,
   type DetailedVerificationLookup,
   type DetailedVerificationRejection,
+  type DetailedOfferTrace,
   type VerifyHubCandidatesOptions,
   type VerifiedHubRoute,
 } from "./verifyHubCandidates.ts";
@@ -42,6 +43,13 @@ import type { TripRequest } from "../../types/trip.ts";
 import { addCalendarDays, enumerateDateWindow } from "../utils/dateWindow.ts";
 import { discoverDirectItinerary } from "./discoverDirectRoute.ts";
 import { FatalSearchStageError } from "./fatalStageFailure.ts";
+import {
+  discoverTwoStopRoutes,
+  observedConnectionsByH1,
+  shouldExploreTwoStopovers,
+} from "./discoverTwoStopRoutes.ts";
+import { findAirportByCode } from "../../data/airports.ts";
+import { distanceKm } from "../utils/geography.ts";
 
 type WarningFunction = (message: string) => void;
 
@@ -355,13 +363,18 @@ export async function searchDynamicRoutes(
     Math.min(candidates.length, 8),
     cleanValidation.failures,
   );
+  const detailedTraces: DetailedOfferTrace[] = [];
   const cleanVerification = await verifyCandidatesUntilFilled(
     request,
     cleanValidation.topCandidates,
     MAX_VERIFIED_HUBS,
     new Set(),
     flightProvider,
-    { flightOffersCache: dependencies.flightOffersCache, warn },
+    {
+      flightOffersCache: dependencies.flightOffersCache,
+      warn,
+      onDetailedOffers: (trace) => detailedTraces.push(trace),
+    },
   );
   const cleanVerifiedHubs = new Set(
     cleanVerification.verifiedRoutes.map((route) => route.hub.airportCode.trim().toUpperCase()),
@@ -384,7 +397,11 @@ export async function searchDynamicRoutes(
       remainingSlots,
       cleanVerifiedHubs,
       flightProvider,
-      { flightOffersCache: dependencies.flightOffersCache, warn },
+      {
+        flightOffersCache: dependencies.flightOffersCache,
+        warn,
+        onDetailedOffers: (trace) => detailedTraces.push(trace),
+      },
     )
     : {
       verifiedRoutes: [],
@@ -415,7 +432,55 @@ export async function searchDynamicRoutes(
     );
   }
 
+  // The one-stop portfolio is finalized before the optional two-stop branch is
+  // considered. Its candidate limits, scoring, and ordering remain untouched.
   const adventures = orderAdventureItineraries(rankVerifiedRoutes(verifiedRoutes).verifiedRoutes);
+  const originAirport = findAirportByCode(request.origin);
+  const destinationAirport = findAirportByCode(request.destination);
+  const directDistanceKm = originAirport && destinationAirport
+    ? distanceKm(originAirport, destinationAirport)
+    : 0;
+  const twoStopEligibility = shouldExploreTwoStopovers({
+    directDistanceKm,
+    oneStopAdventureCount: adventures.length,
+  });
+  let twoStopAdventures: Itinerary[] = [];
+  if (twoStopEligibility.eligible) {
+    // Capture existing detailed H1→destination evidence without changing how
+    // the one-stop verifier selects an offer. This lets connections inform H2
+    // discovery while Explore remains an independent source.
+    try {
+      const h1Candidates = [
+        ...cleanValidation.validatedCandidates,
+        ...(fallbackValidation?.validatedCandidates ?? []),
+      ];
+      const result = await discoverTwoStopRoutes(
+        {
+          origin: request.origin,
+          destination: request.destination,
+          adults: request.adults ?? 1,
+          h1Candidates,
+          observedConnections: observedConnectionsByH1(detailedTraces),
+          slotsNeeded: twoStopEligibility.slotsNeeded,
+        },
+        {
+          directDestinationsProvider:
+            dependencies.directDestinationsProvider ?? searchApiDirectDestinationsProvider,
+          flightCalendarProvider,
+          flightProvider,
+          directDestinationsCache: dependencies.directDestinationsCache,
+          flightCalendarCache: dependencies.flightCalendarCache,
+          flightOffersCache: dependencies.flightOffersCache,
+          warn,
+        },
+      );
+      twoStopAdventures = result.itineraries;
+    } catch (error) {
+      // Two-stop discovery is supplementary. A technical issue here must not
+      // turn an otherwise useful direct/one-stop result into a failed search.
+      warn(`Optional two-stop discovery failed: ${error instanceof Error ? error.message : "Unknown error."}`);
+    }
+  }
   const directItinerary = await directItineraryPromise;
-  return appendDirectBaseline(adventures, directItinerary);
+  return appendDirectBaseline([...adventures, ...twoStopAdventures], directItinerary);
 }

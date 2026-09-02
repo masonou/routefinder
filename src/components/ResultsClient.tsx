@@ -84,7 +84,18 @@ function toFailureState(payload: SearchApiError): SearchFailureState {
 
 function countResultTypes(itineraries: Itinerary[]) {
   const directCount = itineraries.filter(isDirectBaseline).length;
-  return { directCount, adventureCount: itineraries.length - directCount };
+  const oneStopAdventureCount = itineraries.filter(
+    (itinerary) => itinerary.legs.filter((leg) => leg.stopoverAfter).length === 1,
+  ).length;
+  const twoStopAdventureCount = itineraries.filter(
+    (itinerary) => itinerary.legs.filter((leg) => leg.stopoverAfter).length === 2,
+  ).length;
+  return {
+    directCount,
+    adventureCount: oneStopAdventureCount + twoStopAdventureCount,
+    oneStopAdventureCount,
+    twoStopAdventureCount,
+  };
 }
 
 export function SearchFailurePanel({
@@ -173,13 +184,17 @@ export function ResultsClient({ request }: ResultsClientProps) {
         if (payload.itineraries.length === 0) {
           trackNoResults({ origin: request.origin, destination: request.destination });
         } else {
-          const { directCount, adventureCount } = countResultTypes(payload.itineraries);
+          const {
+            directCount, adventureCount, oneStopAdventureCount, twoStopAdventureCount,
+          } = countResultTypes(payload.itineraries);
           trackResultsFound({
             origin: request.origin,
             destination: request.destination,
             resultCount: payload.itineraries.length,
             directCount,
             adventureCount,
+            oneStopAdventureCount,
+            twoStopAdventureCount,
           });
         }
         setItineraries(payload.itineraries);
@@ -245,7 +260,7 @@ export function ResultsClient({ request }: ResultsClientProps) {
     );
   }
 
-  const { directOptions, adventures } = partitionItineraries(itineraries ?? []);
+  const { directOptions, oneStopAdventures, twoStopAdventures } = partitionItineraries(itineraries ?? []);
   const directBaseline = directOptions[0]?.itinerary;
 
   return (
@@ -261,18 +276,18 @@ export function ResultsClient({ request }: ResultsClientProps) {
         </section>
       ) : null}
 
-      {adventures.length > 0 ? (
+      {oneStopAdventures.length > 0 ? (
         <section aria-labelledby="stopover-adventures-heading" className="space-y-4">
           <div>
             <h2 id="stopover-adventures-heading" className="text-base font-semibold text-slate-950">
               Stopover adventures
             </h2>
             <p className="mt-1 text-sm text-slate-600">
-              {adventures.length} {adventures.length === 1 ? "stopover route" : "stopover routes"} found
+              {oneStopAdventures.length} {oneStopAdventures.length === 1 ? "stopover route" : "stopover routes"} found
             </p>
           </div>
           <div className="space-y-4">
-            {adventures.map(({ itinerary, rank }) => (
+            {oneStopAdventures.map(({ itinerary, rank }) => (
               <ItineraryCard
                 key={itinerary.id}
                 itinerary={itinerary}
@@ -284,7 +299,30 @@ export function ResultsClient({ request }: ResultsClientProps) {
         </section>
       ) : null}
 
-      {directOptions.length > 0 && adventures.length === 0 ? (
+      {twoStopAdventures.length > 0 ? (
+        <section aria-labelledby="two-stop-adventures-heading" className="space-y-4">
+          <div>
+            <h2 id="two-stop-adventures-heading" className="text-base font-semibold text-slate-950">
+              Two-stop adventures
+            </h2>
+            <p className="mt-1 text-sm text-slate-600">
+              {twoStopAdventures.length} {twoStopAdventures.length === 1 ? "two-stop adventure" : "two-stop adventures"} found
+            </p>
+          </div>
+          <div className="space-y-4">
+            {twoStopAdventures.map(({ itinerary, rank }) => (
+              <ItineraryCard
+                key={itinerary.id}
+                itinerary={itinerary}
+                rank={rank}
+                directBaseline={directBaseline}
+              />
+            ))}
+          </div>
+        </section>
+      ) : null}
+
+      {directOptions.length > 0 && oneStopAdventures.length === 0 && twoStopAdventures.length === 0 ? (
         <p className="text-sm text-slate-600">
           No stopover routes met our current quality criteria for these dates.
         </p>

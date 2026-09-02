@@ -16,6 +16,17 @@ export const CALENDAR_VALIDATION_CONCURRENCY = 3;
 export const MAX_VERIFIED_HUBS = 3;
 export const DETAILED_VERIFICATION_CONCURRENCY = 2;
 
+// Two-stop discovery is a bounded supplementary branch. These values deliberately
+// do not affect the established one-stop candidate or verification budgets.
+export const TWO_STOP_MIN_DIRECT_DISTANCE_KM = 7_000;
+export const TWO_STOP_MAX_PATH_DETOUR_RATIO = 2.0;
+export const MAX_TWO_STOP_H1_CANDIDATES = 2;
+export const MAX_H2_PER_H1 = 3;
+export const MAX_TWO_STOP_PAIR_ATTEMPTS = 4;
+export const MIN_TWO_STOP_STAY_NIGHTS = 2;
+export const MAX_TWO_STOP_STAY_NIGHTS = 4;
+export const TARGET_TWO_STOP_STAY_NIGHTS = 3;
+
 // Verified-route quality scoring applies to the dynamic discovery pipeline.
 export const VERIFIED_ROUTE_PRICE_WEIGHT = 45;
 export const VERIFIED_ROUTE_DURATION_WEIGHT = 30;

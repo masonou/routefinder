@@ -39,10 +39,14 @@ export function trackResultsFound({
   resultCount,
   directCount,
   adventureCount,
+  oneStopAdventureCount,
+  twoStopAdventureCount,
 }: SearchEventProperties & {
   resultCount: number;
   directCount: number;
   adventureCount: number;
+  oneStopAdventureCount?: number;
+  twoStopAdventureCount?: number;
 }) {
   capture("results_found", {
     origin,
@@ -50,6 +54,12 @@ export function trackResultsFound({
     result_count: resultCount,
     direct_count: directCount,
     adventure_count: adventureCount,
+    ...(oneStopAdventureCount === undefined
+      ? {}
+      : { one_stop_adventure_count: oneStopAdventureCount }),
+    ...(twoStopAdventureCount === undefined
+      ? {}
+      : { two_stop_adventure_count: twoStopAdventureCount }),
   });
 }
 

@@ -40,16 +40,22 @@ export function isDirectBaseline(itinerary: Itinerary): boolean {
 export function partitionItineraries(itineraries: Itinerary[]): {
   directOptions: Array<{ itinerary: Itinerary; rank: number }>;
   adventures: Array<{ itinerary: Itinerary; rank: number }>;
+  oneStopAdventures: Array<{ itinerary: Itinerary; rank: number }>;
+  twoStopAdventures: Array<{ itinerary: Itinerary; rank: number }>;
 } {
   const rankedItineraries = itineraries.map((itinerary, index) => ({
     itinerary,
     rank: index + 1,
   }));
 
-  return {
-    directOptions: rankedItineraries.filter(({ itinerary }) => isDirectBaseline(itinerary)),
-    adventures: rankedItineraries.filter(({ itinerary }) => !isDirectBaseline(itinerary)),
-  };
+  const directOptions = rankedItineraries.filter(({ itinerary }) => isDirectBaseline(itinerary));
+  const oneStopAdventures = rankedItineraries.filter(
+    ({ itinerary }) => getItineraryStopovers(itinerary).length === 1,
+  );
+  const twoStopAdventures = rankedItineraries.filter(
+    ({ itinerary }) => getItineraryStopovers(itinerary).length === 2,
+  );
+  return { directOptions, adventures: oneStopAdventures, oneStopAdventures, twoStopAdventures };
 }
 
 export function getStopoverHeadline(stopover: ItineraryStopover): string {
