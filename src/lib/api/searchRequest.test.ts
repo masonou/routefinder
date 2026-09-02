@@ -46,7 +46,11 @@ test("public searches use dynamic discovery with the existing D through D+3 wind
     throw new Error("Expected cache headers on a successful result.");
   }
   assert.deepEqual(result.headers, { "X-Routefinder-Cache": "MISS" });
-  assert.deepEqual(result.body, { count: 0, itineraries: [] });
+  assert.deepEqual(result.body, {
+    count: 0,
+    itineraries: [],
+    twoStopDiscovery: { explored: false, canExplore: false, reason: "unavailable" },
+  });
 });
 
 test("a cache hit returns cached data without invoking dynamic discovery", async () => {
@@ -54,7 +58,11 @@ test("a cache hit returns cached data without invoking dynamic discovery", async
   const cachedItineraries = [{} as Itinerary];
   const cache: SearchCache = {
     async get() {
-      return { count: 1, itineraries: cachedItineraries };
+      return {
+        count: 1,
+        itineraries: cachedItineraries,
+        twoStopDiscovery: { explored: false, canExplore: false, reason: "unavailable" },
+      };
     },
     async set() {
       throw new Error("Cache hits must not write.");
@@ -75,7 +83,11 @@ test("a cache hit returns cached data without invoking dynamic discovery", async
     throw new Error("Expected cache headers on a successful result.");
   }
   assert.deepEqual(result.headers, { "X-Routefinder-Cache": "HIT" });
-  assert.deepEqual(result.body, { count: 1, itineraries: cachedItineraries });
+  assert.deepEqual(result.body, {
+    count: 1,
+    itineraries: cachedItineraries,
+    twoStopDiscovery: { explored: false, canExplore: false, reason: "unavailable" },
+  });
 });
 
 test("a cache miss invokes dynamic discovery", async () => {
@@ -92,6 +104,62 @@ test("a cache miss invokes dynamic discovery", async () => {
   assert.equal(searchCalls, 1);
 });
 
+test("forced two-stop requests are passed as a bounded planner option", async () => {
+  let receivedForceTwoStop: boolean | undefined;
+  const result = await runSearchRequest(searchRequest(searchInput({ forceTwoStop: true })), {
+    cache: null,
+    async searchDynamicRoutes(_request, options) {
+      receivedForceTwoStop = options.forceTwoStop;
+      return {
+        count: 0,
+        itineraries: [],
+        twoStopDiscovery: { explored: true, canExplore: false, reason: "already_explored" },
+      };
+    },
+  });
+
+  assert.equal(result.status, 200);
+  assert.equal(receivedForceTwoStop, true);
+  if (!("twoStopDiscovery" in result.body)) throw new Error("Expected discovery metadata.");
+  assert.deepEqual(result.body.twoStopDiscovery, {
+    explored: true,
+    canExplore: false,
+    reason: "already_explored",
+  });
+});
+
+test("normal and forced responses do not collide in the high-level cache", async () => {
+  const values = new Map<string, import("../cache/searchCache.ts").SearchCacheValue>();
+  const cache: SearchCache = {
+    async get(key) { return values.get(key) ?? null; },
+    async set(key, value) { values.set(key, value); },
+  };
+  let plannerCalls = 0;
+  const planner = async (_request: TripRequest, options: { forceTwoStop: boolean }) => {
+    plannerCalls += 1;
+    return {
+      count: 0,
+      itineraries: [],
+      twoStopDiscovery: options.forceTwoStop
+        ? { explored: true as const, canExplore: false as const, reason: "already_explored" as const }
+        : { explored: false as const, canExplore: true as const, reason: "portfolio_full" as const },
+    };
+  };
+
+  const normal = await runSearchRequest(searchRequest(searchInput()), { cache, searchDynamicRoutes: planner });
+  const forced = await runSearchRequest(
+    searchRequest(searchInput({ forceTwoStop: true })),
+    { cache, searchDynamicRoutes: planner },
+  );
+
+  assert.equal(plannerCalls, 2);
+  if (!("twoStopDiscovery" in normal.body) || !("twoStopDiscovery" in forced.body)) {
+    throw new Error("Expected discovery metadata.");
+  }
+  assert.equal(normal.body.twoStopDiscovery.reason, "portfolio_full");
+  assert.equal(forced.body.twoStopDiscovery.reason, "already_explored");
+});
+
 test("dynamic discovery is unconditional", async () => {
   let dynamicCalls = 0;
   const dynamicItinerary = { id: "dynamic" } as Itinerary;
@@ -106,7 +174,11 @@ test("dynamic discovery is unconditional", async () => {
   });
   assert.equal(result.status, 200);
   assert.equal(dynamicCalls, 1);
-  assert.deepEqual(result.body, { count: 1, itineraries: [dynamicItinerary] });
+  assert.deepEqual(result.body, {
+    count: 1,
+    itineraries: [dynamicItinerary],
+    twoStopDiscovery: { explored: false, canExplore: false, reason: "unavailable" },
+  });
 });
 
 test("dynamic no-results and provider failures retain public API behaviour", async () => {
@@ -118,7 +190,11 @@ test("dynamic no-results and provider failures retain public API behaviour", asy
   });
   assert.deepEqual(noResults, {
     status: 200,
-    body: { count: 0, itineraries: [] },
+    body: {
+      count: 0,
+      itineraries: [],
+      twoStopDiscovery: { explored: false, canExplore: false, reason: "unavailable" },
+    },
     headers: { "X-Routefinder-Cache": "MISS" },
   });
 
@@ -255,4 +331,13 @@ test("request validation and provider failures remain safe for public callers", 
     },
   });
   assert.doesNotMatch(JSON.stringify(failedResult), new RegExp(secret));
+
+  const invalidForceMode = await runSearchRequest(
+    searchRequest(searchInput({ forceTwoStop: "yes" })),
+    { cache: null },
+  );
+  assert.deepEqual(invalidForceMode, {
+    status: 400,
+    body: { error: "forceTwoStop must be a boolean." },
+  });
 });

@@ -1,4 +1,4 @@
-import type { Itinerary } from "../../types/itinerary.ts";
+import type { DynamicSearchResult } from "../../types/search.ts";
 import { getRedisClient } from "./redis.ts";
 
 export const SEARCH_CACHE_TTL_SECONDS = 300;
@@ -6,10 +6,7 @@ export const EMPTY_SEARCH_CACHE_TTL_SECONDS = 60;
 
 // Reusing a recent planner result reduces repeated flight-provider usage and cost. Fares are
 // indicative and can change, so V1 intentionally keeps this cache to five minutes.
-export interface SearchCacheValue {
-  count: number;
-  itineraries: Itinerary[];
-}
+export type SearchCacheValue = DynamicSearchResult;
 
 export interface SearchCache {
   get(key: string): Promise<SearchCacheValue | null>;
@@ -25,6 +22,7 @@ interface SearchCacheKeyInput {
   destination: string;
   earliestDeparture: string;
   adults: number;
+  forceTwoStop?: boolean;
 }
 
 type WarningFunction = (message: string) => void;
@@ -38,18 +36,21 @@ function isSearchCacheValue(value: unknown): value is SearchCacheValue {
   return (
     Number.isInteger(record.count) &&
     Array.isArray(record.itineraries) &&
-    record.count === record.itineraries.length
+    record.count === record.itineraries.length &&
+    typeof record.twoStopDiscovery === "object" &&
+    record.twoStopDiscovery !== null
   );
 }
 
 export function buildSearchCacheKey(input: SearchCacheKeyInput): string {
   return [
-    "routefinder:search:v15",
+    "routefinder:search:v16",
     input.origin.trim().toUpperCase(),
     input.destination.trim().toUpperCase(),
     input.earliestDeparture,
     String(Math.trunc(input.adults)),
     "dynamic",
+    input.forceTwoStop === true ? "force-two-stop" : "normal",
   ].join(":");
 }
 

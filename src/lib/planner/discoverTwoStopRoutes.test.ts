@@ -102,3 +102,26 @@ test("three verified nonstop legs produce retained generic two-stop itineraries 
   assert.equal(itinerary?.totalPrice.amount, 300);
   assert.equal(new Set(result.itineraries.map((entry) => entry.legs[1]?.flight.destination)).size, 3);
 });
+
+test("technical branch failures remain visible to an explicit caller without changing route selection", async () => {
+  const result = await discoverTwoStopRoutes(
+    { origin: "BNE", destination: "LCA", adults: 1, h1Candidates: [bangkok], observedConnections: new Map(), targetResults: 3 },
+    {
+      directDestinationsCache: null,
+      flightCalendarCache: null,
+      flightOffersCache: null,
+      directDestinationsProvider: {
+        async getDirectDestinations() { throw new Error("Explore temporarily unavailable"); },
+      },
+      flightCalendarProvider: { async getFlightCalendar() { return []; } },
+      flightProvider: {
+        name: "test",
+        async searchOneWay() { return [offer("BNE", "BKK", "2026-09-01")]; },
+      },
+      warn: () => {},
+    },
+  );
+
+  assert.equal(result.itineraries.length, 0);
+  assert.equal(result.technicalFailureCount, 1);
+});

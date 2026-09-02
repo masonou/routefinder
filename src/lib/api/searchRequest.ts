@@ -4,7 +4,7 @@ import {
   getSearchCacheResponseHeaders,
   runCachedSearch,
 } from "../cache/searchCache.ts";
-import { searchDynamicRoutes } from "../planner/searchDynamicRoutes.ts";
+import { searchDynamicRoutePortfolio } from "../planner/searchDynamicRoutes.ts";
 import {
   classifySearchFailure,
   createSearchFailureReference,
@@ -18,9 +18,13 @@ import {
 } from "../utils/searchValidation.ts";
 import type { SearchCache } from "../cache/searchCache.ts";
 import type { Itinerary } from "../../types/itinerary.ts";
+import type { DynamicSearchResult } from "../../types/search.ts";
 import type { TripRequest } from "../../types/trip.ts";
 
-type DynamicSearchFunction = (request: TripRequest) => Promise<Itinerary[]>;
+type DynamicSearchFunction = (
+  request: TripRequest,
+  options: { forceTwoStop: boolean },
+) => Promise<DynamicSearchResult | Itinerary[]>;
 
 export interface SearchRequestDependencies {
   cache?: SearchCache | null;
@@ -31,7 +35,7 @@ export interface SearchRequestDependencies {
 export type SearchRequestResult =
   | {
       status: 200;
-      body: { count: number; itineraries: Itinerary[] };
+      body: DynamicSearchResult;
       headers: Record<string, string>;
     }
   | { status: 400; body: { error: string } }
@@ -60,10 +64,21 @@ export async function runSearchRequest(
       key: buildSearchCacheKey(searchRequest),
       cache,
       async load() {
-        const itineraries = await (dependencies.searchDynamicRoutes ?? searchDynamicRoutes)(
+        const result = await (dependencies.searchDynamicRoutes ?? searchDynamicRoutePortfolio)(
           tripRequest,
+          { forceTwoStop: searchRequest.forceTwoStop === true },
         );
-        return { count: itineraries.length, itineraries };
+        // Retaining this narrow compatibility path keeps injected test and
+        // integration planners written before the response metadata contract
+        // working, while production always returns the richer portfolio.
+        if (Array.isArray(result)) {
+          return {
+            count: result.length,
+            itineraries: result,
+            twoStopDiscovery: { explored: false, canExplore: false, reason: "unavailable" },
+          };
+        }
+        return result;
       },
     });
 

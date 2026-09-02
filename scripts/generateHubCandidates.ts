@@ -11,6 +11,7 @@ import {
   MAX_CALENDAR_CANDIDATES,
   MAX_DEPARTURE_VARIANTS_PER_HUB,
   MAX_VERIFIED_HUBS,
+  MAX_TWO_STOP_RESULTS,
   MAX_HUB_CANDIDATES,
   MAX_HUB_DETOUR_RATIO,
 } from "../src/lib/constants/planner.ts";
@@ -53,9 +54,10 @@ import {
 
 nextEnv.loadEnvConfig(process.cwd());
 
-const [originArg, destinationArg, departureDate] = process.argv.slice(2);
+const [originArg, destinationArg, departureDate, ...optionArgs] = process.argv.slice(2);
 const origin = originArg?.trim().toUpperCase();
 const destination = destinationArg?.trim().toUpperCase();
+const forceTwoStop = optionArgs.includes("--force-two-stop");
 
 interface DiagnosticCandidate extends HubCandidate {
   scoreBreakdown: ReturnType<typeof calculateHubCandidateScoreBreakdown>;
@@ -239,7 +241,7 @@ function printNonstopMismatch(
 
 async function run(): Promise<void> {
   if (!origin || !destination || !departureDate) {
-    throw new Error("Usage: npm run hubs:debug -- <origin> <destination> <YYYY-MM-DD>");
+    throw new Error("Usage: npm run hubs:debug -- <origin> <destination> <YYYY-MM-DD> [--force-two-stop]");
   }
   const dates = enumerateDateWindow({ start: departureDate, end: addCalendarDays(departureDate, DEPARTURE_FLEX_DAYS) });
   const cache = getDirectDestinationsCache();
@@ -426,7 +428,13 @@ async function run(): Promise<void> {
   console.log(`clean one-stop: ${oneStopPortfolio.clean.length}\nconnecting one-stop: ${oneStopPortfolio.connecting.length}`);
   console.log("\nTWO-STOP ELIGIBILITY");
   console.log(`direct distance: ${directDistanceKm} km\nclean one-stop count: ${oneStopPortfolio.clean.length}\ntwo-stop target: ${twoStopEligibility.targetResults}\neligible: ${twoStopEligibility.eligible ? "yes" : "no"}\nreason: ${twoStopEligibility.reason}`);
-  const twoStop = twoStopEligibility.eligible
+  const forcePortfolioFull = forceTwoStop && twoStopEligibility.reason === "portfolio_full";
+  const shouldRunTwoStop = twoStopEligibility.eligible || forcePortfolioFull;
+  if (forceTwoStop) {
+    console.log(`force-two-stop: ${forcePortfolioFull ? "enabled (portfolio_full bypass only)" : "ignored (route remains protected or automatic discovery already applies)"}`);
+  }
+  const twoStopTarget = forcePortfolioFull ? MAX_TWO_STOP_RESULTS : twoStopEligibility.targetResults;
+  const twoStop = shouldRunTwoStop
     ? await discoverTwoStopRoutes(
       {
         origin,
@@ -437,7 +445,7 @@ async function run(): Promise<void> {
           ...(fallbackValidation?.validatedCandidates ?? []),
         ],
         observedConnections: observedConnectionsByH1(offerTraces),
-        targetResults: twoStopEligibility.targetResults,
+        targetResults: twoStopTarget,
       },
       {
         directDestinationsProvider: searchApiDirectDestinationsProvider,
@@ -476,7 +484,7 @@ async function run(): Promise<void> {
   }
   console.log("\nFINAL RETURNED RESULTS");
   console.log(`direct: not evaluated by hubs:debug\none-stop clean: ${oneStopPortfolio.clean.length}\none-stop connecting: ${oneStopPortfolio.connecting.length}\none-stop total: ${finalAdventures.length}\ntwo-stop: ${twoStop?.itineraries.length ?? 0}\ntotal itineraries returned: ${finalAdventures.length + (twoStop?.itineraries.length ?? 0)}`);
-  console.log(`TWO-STOP DISCOVERY\neligible: ${twoStopEligibility.eligible ? "yes" : "no"}\nverified: ${twoStop?.itineraries.length ?? 0} / ${twoStopEligibility.targetResults} target`);
+  console.log(`TWO-STOP DISCOVERY\neligible: ${shouldRunTwoStop ? "yes" : "no"}\nverified: ${twoStop?.itineraries.length ?? 0} / ${twoStopTarget} target`);
   const exploreHits = explore.filter((result) => result.cacheStatus === "HIT").length;
   const calendarLookups = [
     ...cleanValidation.calendarLookups,

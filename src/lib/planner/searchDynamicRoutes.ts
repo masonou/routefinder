@@ -9,7 +9,9 @@ import type { FlightOffersCache } from "../cache/flightOffersCache.ts";
 import {
   DEPARTURE_FLEX_DAYS,
   MAX_ONE_STOP_RESULTS,
+  MAX_TWO_STOP_RESULTS,
   MAX_VERIFIED_HUBS,
+  TWO_STOP_MIN_DIRECT_DISTANCE_KM,
 } from "../constants/planner.ts";
 import {
   searchApiDirectDestinationsProvider,
@@ -55,6 +57,10 @@ import {
 } from "./discoverTwoStopRoutes.ts";
 import { findAirportByCode } from "../../data/airports.ts";
 import { distanceKm } from "../utils/geography.ts";
+import type {
+  DynamicSearchResult,
+  TwoStopDiscoveryMetadata,
+} from "../../types/search.ts";
 
 type WarningFunction = (message: string) => void;
 
@@ -66,6 +72,11 @@ export interface DynamicSearchDependencies {
   flightCalendarCache?: FlightCalendarCache | null;
   flightOffersCache?: FlightOffersCache | null;
   warn?: WarningFunction;
+}
+
+export interface DynamicSearchOptions {
+  /** Explicitly bypasses only the full one-stop portfolio optimisation. */
+  forceTwoStop?: boolean;
 }
 
 export interface ExploreDiscoveryResult {
@@ -315,14 +326,30 @@ export async function discoverFlexibleHubCandidates(
   };
 }
 
-export async function searchDynamicRoutes(
+function twoStopUnavailableForDistance(directDistanceKm: number): TwoStopDiscoveryMetadata {
+  return directDistanceKm < TWO_STOP_MIN_DIRECT_DISTANCE_KM
+    ? { explored: false, canExplore: false, reason: "route_too_short" }
+    : { explored: false, canExplore: false, reason: "unavailable" };
+}
+
+/**
+ * Runs the planner and returns its generic itinerary portfolio plus the small
+ * search-level state needed to offer an optional two-stop expansion.
+ */
+export async function searchDynamicRoutePortfolio(
   request: TripRequest,
+  options: DynamicSearchOptions = {},
   dependencies: DynamicSearchDependencies = {},
-): Promise<Itinerary[]> {
+): Promise<DynamicSearchResult> {
   const flightCalendarProvider =
     dependencies.flightCalendarProvider ?? searchApiFlightCalendarProvider;
   const flightProvider = dependencies.flightProvider ?? searchApiFlightProvider;
   const warn = dependencies.warn ?? console.warn;
+  const originAirport = findAirportByCode(request.origin);
+  const destinationAirport = findAirportByCode(request.destination);
+  const directDistanceKm = originAirport && destinationAirport
+    ? distanceKm(originAirport, destinationAirport)
+    : 0;
   // The direct baseline is independent from hub exploration and intentionally
   // continues in parallel with the adventure pipeline.
   const directItineraryPromise = discoverDirectItinerary(
@@ -355,7 +382,12 @@ export async function searchDynamicRoutes(
   const candidates = discovery.calendarCandidates;
   if (candidates.length === 0) {
     const directItinerary = await directItineraryPromise;
-    return appendDirectBaseline([], directItinerary);
+    const itineraries = appendDirectBaseline([], directItinerary);
+    return {
+      count: itineraries.length,
+      itineraries,
+      twoStopDiscovery: twoStopUnavailableForDistance(directDistanceKm),
+    };
   }
 
   const cleanValidation = await validateHubCandidates(
@@ -441,17 +473,20 @@ export async function searchDynamicRoutes(
   // considered. Its candidate limits, scoring, and ordering remain untouched.
   const oneStopAdventures = orderAdventureItineraries(rankVerifiedRoutes(verifiedRoutes).verifiedRoutes);
   const oneStopPortfolio = partitionOneStopAdventures(oneStopAdventures);
-  const originAirport = findAirportByCode(request.origin);
-  const destinationAirport = findAirportByCode(request.destination);
-  const directDistanceKm = originAirport && destinationAirport
-    ? distanceKm(originAirport, destinationAirport)
-    : 0;
   const twoStopEligibility = shouldExploreTwoStopovers({
     directDistanceKm,
     cleanOneStopAdventureCount: oneStopPortfolio.clean.length,
   });
+  const forcePortfolioFull = options.forceTwoStop === true &&
+    twoStopEligibility.reason === "portfolio_full";
+  const shouldRunTwoStopDiscovery = twoStopEligibility.eligible || forcePortfolioFull;
+  const twoStopDiscovery: TwoStopDiscoveryMetadata = shouldRunTwoStopDiscovery
+    ? { explored: true, canExplore: false, reason: "already_explored" }
+    : twoStopEligibility.reason === "portfolio_full"
+      ? { explored: false, canExplore: true, reason: "portfolio_full" }
+      : { explored: false, canExplore: false, reason: "route_too_short" };
   let twoStopAdventures: Itinerary[] = [];
-  if (twoStopEligibility.eligible) {
+  if (shouldRunTwoStopDiscovery) {
     // Capture existing detailed H1→destination evidence without changing how
     // the one-stop verifier selects an offer. This lets connections inform H2
     // discovery while Explore remains an independent source.
@@ -467,7 +502,9 @@ export async function searchDynamicRoutes(
           adults: request.adults ?? 1,
           h1Candidates,
           observedConnections: observedConnectionsByH1(detailedTraces),
-          targetResults: twoStopEligibility.targetResults,
+          targetResults: forcePortfolioFull
+            ? MAX_TWO_STOP_RESULTS
+            : twoStopEligibility.targetResults,
         },
         {
           directDestinationsProvider:
@@ -481,14 +518,39 @@ export async function searchDynamicRoutes(
         },
       );
       twoStopAdventures = result.itineraries;
+      // The regular search treats two-stop exploration as supplementary. For
+      // an explicit expansion, however, a total technical failure deserves a
+      // structured response so the existing portfolio can remain on screen
+      // with an inline retry affordance.
+      if (
+        options.forceTwoStop === true &&
+        result.itineraries.length === 0 &&
+        result.h1Candidates.length > 0 &&
+        result.technicalFailureCount === result.h1Candidates.length
+      ) {
+        throw new Error("All forced two-stop discovery branches failed.");
+      }
     } catch (error) {
       // Two-stop discovery is supplementary. A technical issue here must not
       // turn an otherwise useful direct/one-stop result into a failed search.
       warn(`Optional two-stop discovery failed: ${error instanceof Error ? error.message : "Unknown error."}`);
+      if (options.forceTwoStop === true) throw error;
     }
   }
   const directItinerary = await directItineraryPromise;
   // Result categories are independent: a verified two-stop route never
   // displaces a verified one-stop route merely to satisfy a combined cap.
-  return appendDirectBaseline([...oneStopAdventures, ...twoStopAdventures], directItinerary);
+  const itineraries = appendDirectBaseline(
+    [...oneStopAdventures, ...twoStopAdventures],
+    directItinerary,
+  );
+  return { count: itineraries.length, itineraries, twoStopDiscovery };
+}
+
+/** Backwards-compatible itinerary-only entry point for planner consumers. */
+export async function searchDynamicRoutes(
+  request: TripRequest,
+  dependencies: DynamicSearchDependencies = {},
+): Promise<Itinerary[]> {
+  return (await searchDynamicRoutePortfolio(request, {}, dependencies)).itineraries;
 }

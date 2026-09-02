@@ -13,6 +13,8 @@ export interface SearchFormValues {
 
 export interface PublicSearchRequest extends SearchFormValues {
   adults: number;
+  /** Server-facing only; never written to the results URL. */
+  forceTwoStop?: boolean;
 }
 
 export interface SearchFormErrors {
@@ -118,7 +120,12 @@ export function validateSearchApiBody(body: unknown): PublicSearchRequest {
     throw new SearchValidationError("Adults must be a positive integer.");
   }
 
-  return createSearchRequestFromFormValues(
+  const forceTwoStop = record.forceTwoStop;
+  if (forceTwoStop !== undefined && typeof forceTwoStop !== "boolean") {
+    throw new SearchValidationError("forceTwoStop must be a boolean.");
+  }
+
+  const request = createSearchRequestFromFormValues(
     {
       origin: getRequiredString(record, "origin"),
       destination: getRequiredString(record, "destination"),
@@ -126,6 +133,7 @@ export function validateSearchApiBody(body: unknown): PublicSearchRequest {
     },
     adults
   );
+  return forceTwoStop === true ? { ...request, forceTwoStop: true } : request;
 }
 
 export function toTripRequest(request: PublicSearchRequest): TripRequest {

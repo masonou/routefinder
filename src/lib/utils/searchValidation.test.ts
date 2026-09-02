@@ -89,6 +89,18 @@ test("API validation no longer requires latest arrival and derives a four-day wi
   assert.equal(DEPARTURE_FLEX_DAYS, 3);
 });
 
+test("API validation accepts only the predefined boolean forced two-stop mode", () => {
+  assert.deepEqual(validateSearchApiBody({ ...validValues, forceTwoStop: true }), {
+    ...validValues,
+    adults: 1,
+    forceTwoStop: true,
+  });
+  assert.throws(
+    () => validateSearchApiBody({ ...validValues, forceTwoStop: "true" }),
+    /forceTwoStop must be a boolean/,
+  );
+});
+
 test("buildResultsUrl uses only the simplified search parameters", () => {
   assert.equal(
     buildResultsUrl(validValues),

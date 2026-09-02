@@ -67,6 +67,50 @@ export function trackNoResults({ origin, destination }: SearchEventProperties) {
   capture("no_results", { origin, destination });
 }
 
+export function trackTwoStopExploreClicked({
+  origin,
+  destination,
+  existingOneStopCount,
+}: SearchEventProperties & { existingOneStopCount: number }) {
+  capture("two_stop_explore_clicked", {
+    origin,
+    destination,
+    existing_one_stop_count: existingOneStopCount,
+  });
+}
+
+export function trackTwoStopExploreCompleted({
+  origin,
+  destination,
+  twoStopCount,
+}: SearchEventProperties & { twoStopCount: number }) {
+  capture("two_stop_explore_completed", {
+    origin,
+    destination,
+    two_stop_count: twoStopCount,
+  });
+}
+
+export function trackTwoStopExploreFailed({
+  origin,
+  destination,
+  failureCode,
+  failureReference,
+  failureStage,
+}: SearchEventProperties & {
+  failureCode: SearchFailureCode;
+  failureReference: string;
+  failureStage: SearchFailureStage;
+}) {
+  capture("two_stop_explore_failed", {
+    origin,
+    destination,
+    failure_code: failureCode,
+    failure_reference: failureReference,
+    failure_stage: failureStage,
+  });
+}
+
 export function trackSearchFailed({
   origin,
   destination,

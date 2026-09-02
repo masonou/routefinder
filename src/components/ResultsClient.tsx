@@ -4,6 +4,10 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import type { Itinerary } from "../types/itinerary.ts";
+import type {
+  DynamicSearchResult,
+  TwoStopDiscoveryMetadata,
+} from "../types/search.ts";
 import type { PublicSearchRequest } from "../lib/utils/searchValidation.ts";
 import type {
   SearchFailureCode,
@@ -13,6 +17,9 @@ import {
   trackNoResults,
   trackResultsFound,
   trackSearchFailed,
+  trackTwoStopExploreClicked,
+  trackTwoStopExploreCompleted,
+  trackTwoStopExploreFailed,
 } from "../lib/analytics/events";
 import { DirectItineraryCard, ItineraryCard } from "./ItineraryCard";
 import { SearchLoadingState } from "./SearchLoadingState";
@@ -24,10 +31,7 @@ import {
 import { getResultsViewState } from "./resultsViewState";
 import { formatSearchFailureReference } from "./searchFailureReference";
 
-interface SearchApiResponse {
-  count: number;
-  itineraries: Itinerary[];
-}
+type SearchApiResponse = DynamicSearchResult;
 
 interface SearchApiError {
   error: string;
@@ -54,6 +58,8 @@ interface SearchFailureState {
   retryable: boolean;
   providerStatus?: number;
 }
+
+type TwoStopExploreState = "idle" | "loading" | "empty" | "error";
 
 function createClientFailure(
   code: "SL-REQUEST-NETWORK" | "SL-SEARCH-UNKNOWN",
@@ -102,6 +108,15 @@ function countResultTypes(itineraries: Itinerary[]) {
   };
 }
 
+function deduplicateItineraries(itineraries: Itinerary[]): Itinerary[] {
+  const seen = new Set<string>();
+  return itineraries.filter((itinerary) => {
+    if (seen.has(itinerary.id)) return false;
+    seen.add(itinerary.id);
+    return true;
+  });
+}
+
 export function SearchFailurePanel({
   failureReference,
   onRetry,
@@ -142,6 +157,9 @@ export function ResultsClient({ request }: ResultsClientProps) {
   const [retryToken, setRetryToken] = useState(0);
   const [showAllOneStop, setShowAllOneStop] = useState(false);
   const [showAllTwoStop, setShowAllTwoStop] = useState(false);
+  const [twoStopDiscovery, setTwoStopDiscovery] = useState<TwoStopDiscoveryMetadata | null>(null);
+  const [twoStopExploreState, setTwoStopExploreState] = useState<TwoStopExploreState>("idle");
+  const [twoStopExploreFailure, setTwoStopExploreFailure] = useState<SearchFailureState | null>(null);
 
   useEffect(() => {
     const abortController = new AbortController();
@@ -152,6 +170,9 @@ export function ResultsClient({ request }: ResultsClientProps) {
       setItineraries(null);
       setShowAllOneStop(false);
       setShowAllTwoStop(false);
+      setTwoStopDiscovery(null);
+      setTwoStopExploreState("idle");
+      setTwoStopExploreFailure(null);
 
       try {
         const response = await fetch("/api/search", {
@@ -205,7 +226,8 @@ export function ResultsClient({ request }: ResultsClientProps) {
             twoStopAdventureCount,
           });
         }
-        setItineraries(payload.itineraries);
+        setItineraries(deduplicateItineraries(payload.itineraries));
+        setTwoStopDiscovery(payload.twoStopDiscovery);
       } catch (error) {
         if (!abortController.signal.aborted) {
           const failureState = createClientFailure(
@@ -239,6 +261,68 @@ export function ResultsClient({ request }: ResultsClientProps) {
     request.adults,
     retryToken,
   ]);
+
+  async function exploreTwoStopAdventures() {
+    if (twoStopExploreState === "loading") return;
+
+    const existingOneStopCount = countResultTypes(itineraries ?? []).oneStopAdventureCount;
+    trackTwoStopExploreClicked({
+      origin: request.origin,
+      destination: request.destination,
+      existingOneStopCount,
+    });
+    setTwoStopExploreState("loading");
+    setTwoStopExploreFailure(null);
+
+    try {
+      const response = await fetch("/api/search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...request, forceTwoStop: true }),
+      });
+      const payload = (await response.json()) as SearchApiResponse | SearchApiError;
+      if (!response.ok || !("itineraries" in payload) || !Array.isArray(payload.itineraries)) {
+        const failureState = toFailureState(
+          "error" in payload ? payload : { error: "Search failed." },
+        );
+        trackTwoStopExploreFailed({
+          origin: request.origin,
+          destination: request.destination,
+          failureCode: failureState.code,
+          failureReference: failureState.reference,
+          failureStage: failureState.stage,
+        });
+        setTwoStopExploreFailure(failureState);
+        setTwoStopExploreState("error");
+        return;
+      }
+
+      const expandedItineraries = deduplicateItineraries(payload.itineraries);
+      const twoStopCount = countResultTypes(expandedItineraries).twoStopAdventureCount;
+      setItineraries(expandedItineraries);
+      setTwoStopDiscovery(payload.twoStopDiscovery);
+      setTwoStopExploreState(twoStopCount === 0 ? "empty" : "idle");
+      trackTwoStopExploreCompleted({
+        origin: request.origin,
+        destination: request.destination,
+        twoStopCount,
+      });
+    } catch (error) {
+      const failureState = createClientFailure(
+        error instanceof TypeError ? "SL-REQUEST-NETWORK" : "SL-SEARCH-UNKNOWN",
+        error instanceof TypeError ? "request" : "unknown",
+      );
+      trackTwoStopExploreFailed({
+        origin: request.origin,
+        destination: request.destination,
+        failureCode: failureState.code,
+        failureReference: failureState.reference,
+        failureStage: failureState.stage,
+      });
+      setTwoStopExploreFailure(failureState);
+      setTwoStopExploreState("error");
+    }
+  }
 
   const viewState = getResultsViewState(itineraries, errorMessage);
 
@@ -324,6 +408,36 @@ export function ResultsClient({ request }: ResultsClientProps) {
             >
               {hiddenOneStopCount === 1 ? "Show 1 more" : "Show more"}
             </button>
+          ) : null}
+          {twoStopDiscovery?.canExplore ? (
+            <div className="space-y-2" aria-live="polite">
+              {twoStopExploreState === "loading" ? (
+                <p className="text-sm text-slate-600">Exploring two-stop adventures…</p>
+              ) : null}
+              {twoStopExploreState === "error" ? (
+                <div className="space-y-2 text-sm text-slate-600">
+                  <p>We couldn&apos;t explore more routes right now.</p>
+                  {twoStopExploreFailure ? (
+                    <p className="font-mono text-xs text-slate-500">
+                      {formatSearchFailureReference(twoStopExploreFailure.reference)}
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
+              <button
+                type="button"
+                onClick={() => void exploreTwoStopAdventures()}
+                disabled={twoStopExploreState === "loading"}
+                className="min-h-11 w-full rounded-lg border border-slate-300 px-4 text-sm font-semibold text-slate-900 outline-none hover:border-slate-400 focus-visible:ring-2 focus-visible:ring-blue-700 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
+              >
+                {twoStopExploreState === "error" ? "Try again" : "Explore two-stop adventures"}
+              </button>
+            </div>
+          ) : null}
+          {twoStopExploreState === "empty" && !twoStopDiscovery?.canExplore ? (
+            <p className="text-sm text-slate-600" aria-live="polite">
+              No additional two-stop adventures found for these dates.
+            </p>
           ) : null}
         </section>
       ) : null}

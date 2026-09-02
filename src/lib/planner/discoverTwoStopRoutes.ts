@@ -171,6 +171,8 @@ export interface TwoStopDiscoveryResult {
   h2Candidates: Array<{ h1: string; candidates: TwoStopH2Candidate[] }>;
   attemptedPairs: number;
   failures: string[];
+  /** Number of H1 branches that ended in a provider/cache technical failure. */
+  technicalFailureCount: number;
   api: TwoStopApiAccounting;
 }
 
@@ -355,6 +357,7 @@ export async function discoverTwoStopRoutes(
     middleDetailedCalls: 0, finalCalendarCalls: 0, finalDetailedCalls: 0, cacheHits: 0,
   };
   const failures: string[] = [];
+  let technicalFailureCount = 0;
   const h2Candidates: Array<{ h1: string; candidates: TwoStopH2Candidate[] }> = [];
   const verified: VerifiedTwoStopRoute[] = [];
   let attemptedPairs = 0;
@@ -440,6 +443,7 @@ export async function discoverTwoStopRoutes(
       const message = error instanceof Error ? error.message : "Unknown optional two-stop failure.";
       warn(`Two-stop discovery failed for ${h1.airportCode}: ${message}`);
       failures.push(`${h1.airportCode}: ${message}`);
+      technicalFailureCount += 1;
     }
   }
   const rankedRoutes = scoreRoutes(verified).slice(0, input.targetResults);
@@ -457,6 +461,6 @@ export async function discoverTwoStopRoutes(
       h2: route.h2.airportCode,
       score: route.scoreBreakdown,
     })),
-    h1Candidates, h2Candidates, attemptedPairs, failures, api,
+    h1Candidates, h2Candidates, attemptedPairs, failures, technicalFailureCount, api,
   };
 }

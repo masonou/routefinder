@@ -6,6 +6,7 @@ import {
   discoverFlexibleHubCandidates,
   getInitialDepartureDates,
   orderAdventureItineraries,
+  searchDynamicRoutePortfolio,
   searchDynamicRoutes,
   toDynamicItinerary,
 } from "./searchDynamicRoutes.ts";
@@ -129,7 +130,11 @@ const fallbackScenarioHubs: DirectDestination[] = fallbackScenarioHubLocations.m
   flightDurationMinutes: 240 + index,
 }));
 
-async function runFallbackScenario(cleanSuccesses: number, fallbackStops = 1) {
+async function runFallbackScenario(
+  cleanSuccesses: number,
+  fallbackStops = 1,
+  forceTwoStop = false,
+) {
   const fallbackOnwardDates = new Set<string>();
   const cleanFailedHubs = new Set<string>();
   const fallbackDetailedHubs = new Set<string>();
@@ -139,7 +144,7 @@ async function runFallbackScenario(cleanSuccesses: number, fallbackStops = 1) {
   let fallbackDetailedCalls = 0;
   let twoStopExploreCalls = 0;
 
-  const itineraries = await searchDynamicRoutes(request, {
+  const portfolio = await searchDynamicRoutePortfolio(request, { forceTwoStop }, {
     directDestinationsCache: null,
     flightCalendarCache: null,
     flightOffersCache: null,
@@ -202,6 +207,7 @@ async function runFallbackScenario(cleanSuccesses: number, fallbackStops = 1) {
       },
     },
   });
+  const itineraries = portfolio.itineraries;
 
   return {
     adventures: itineraries.filter((itinerary) => itinerary.legs.length === 2),
@@ -212,6 +218,7 @@ async function runFallbackScenario(cleanSuccesses: number, fallbackStops = 1) {
     twoStopExploreCalls,
     cleanFailedHubs,
     fallbackDetailedHubs,
+    twoStopDiscovery: portfolio.twoStopDiscovery,
   };
 }
 
@@ -353,6 +360,44 @@ test("three clean verified adventures skip fallback Calendar and detailed work",
   assert.equal(result.fallbackCalendarCalls, 0);
   assert.equal(result.fallbackDetailedCalls, 0);
   assert.equal(result.twoStopExploreCalls, 0);
+  assert.deepEqual(result.twoStopDiscovery, {
+    explored: false,
+    canExplore: true,
+    reason: "portfolio_full",
+  });
+});
+
+test("a forced long-route request bypasses only the full one-stop portfolio optimisation", async () => {
+  const result = await runFallbackScenario(3, 1, true);
+
+  assert.ok(result.twoStopExploreCalls > 0, "forced mode should invoke the bounded H2 Explore branch");
+  assert.deepEqual(result.twoStopDiscovery, {
+    explored: true,
+    canExplore: false,
+    reason: "already_explored",
+  });
+});
+
+test("forced two-stop mode remains unavailable on a short route", async () => {
+  const shortRoute: TripRequest = {
+    ...request,
+    origin: "BCN",
+    destination: "LCA",
+  };
+  const portfolio = await searchDynamicRoutePortfolio(shortRoute, { forceTwoStop: true }, {
+    directDestinationsCache: null,
+    flightCalendarCache: null,
+    flightOffersCache: null,
+    directDestinationsProvider: { async getDirectDestinations() { return []; } },
+    flightCalendarProvider: { async getFlightCalendar() { return []; } },
+    flightProvider: flightProvider(),
+  });
+
+  assert.deepEqual(portfolio.twoStopDiscovery, {
+    explored: false,
+    canExplore: false,
+    reason: "route_too_short",
+  });
 });
 
 test("fallback fills slots left by clean detailed failures and can retry a failed clean hub", async () => {
