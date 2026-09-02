@@ -135,7 +135,7 @@ test("keeps distinct hub/date variants but deduplicates exact duplicates by exis
   assert.equal(variants[0]?.candidateScore, 500);
 });
 
-test("limits Calendar candidate variants per hub and globally", () => {
+test("uses unique hubs before second variants while retaining per-hub and global limits", () => {
   const candidates = [
     ...Array.from({ length: 4 }, (_, index) =>
       variant("IST", `2026-09-0${index + 1}`, { candidateScore: 600 - index }),
@@ -151,7 +151,36 @@ test("limits Calendar candidate variants per hub and globally", () => {
   const istCount = selected.filter((candidate) => candidate.airportCode === "IST").length;
   const athCount = selected.filter((candidate) => candidate.airportCode === "ATH").length;
 
-  assert.equal(istCount, MAX_DEPARTURE_VARIANTS_PER_HUB);
-  assert.equal(athCount, MAX_DEPARTURE_VARIANTS_PER_HUB);
-  assert.ok(selected.length <= MAX_CALENDAR_CANDIDATES);
+  assert.equal(istCount, 1);
+  assert.equal(athCount, 1);
+  assert.equal(selected.length, MAX_CALENDAR_CANDIDATES);
+  assert.equal(new Set(selected.map((candidate) => candidate.airportCode)).size, MAX_CALENDAR_CANDIDATES);
+  assert.ok(istCount <= MAX_DEPARTURE_VARIANTS_PER_HUB);
+  assert.ok(athCount <= MAX_DEPARTURE_VARIANTS_PER_HUB);
+});
+
+test("fills remaining Calendar slots with the strongest unused date variants", () => {
+  const selected = selectCalendarCandidateVariants([
+    variant("A", "2026-09-01", { candidateScore: 600 }),
+    variant("A", "2026-09-02", { candidateScore: 590 }),
+    variant("B", "2026-09-01", { candidateScore: 580 }),
+    variant("B", "2026-09-02", { candidateScore: 570 }),
+    variant("C", "2026-09-01", { candidateScore: 560 }),
+    variant("C", "2026-09-02", { candidateScore: 550 }),
+  ], 5);
+
+  assert.deepEqual(
+    selected.map((candidate) => `${candidate.airportCode}:${candidate.firstLegDepartureDate}`),
+    ["A:2026-09-01", "B:2026-09-01", "C:2026-09-01", "A:2026-09-02", "B:2026-09-02"],
+  );
+});
+
+test("preserves deterministic Stage 1 tie ordering during unique-hub selection", () => {
+  const selected = selectCalendarCandidateVariants([
+    variant("B", "2026-09-02", { candidateScore: 500 }),
+    variant("A", "2026-09-02", { candidateScore: 500 }),
+    variant("C", "2026-09-02", { candidateScore: 500 }),
+  ]);
+  // Existing tie-breaking uses the airport code after all equal score fields.
+  assert.deepEqual(selected.map((candidate) => candidate.airportCode), ["A", "B", "C"]);
 });

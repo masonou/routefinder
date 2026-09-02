@@ -16,8 +16,9 @@ import {
 } from "../src/lib/constants/planner.ts";
 import {
   calculateHubCandidateScoreBreakdown,
-  deduplicateHubCandidateVariants,
   generateHubCandidates,
+  getCalendarCandidateVariantPool,
+  selectCalendarCandidateVariants,
   type HubCandidate,
 } from "../src/lib/planner/hubCandidates.ts";
 import {
@@ -63,16 +64,16 @@ interface DiagnosticCandidate extends HubCandidate {
   scoreBreakdown: ReturnType<typeof calculateHubCandidateScoreBreakdown>;
 }
 
-function key(candidate: Pick<HubCandidate, "airportCode" | "firstLegDepartureDate">): string {
-  return `${candidate.airportCode.trim().toUpperCase()}:${candidate.firstLegDepartureDate}`;
-}
-
 function compare(left: HubCandidate, right: HubCandidate): number {
   return right.candidateScore - left.candidateScore || left.detourRatio - right.detourRatio ||
     (left.indicativeFirstLegPrice ?? Infinity) - (right.indicativeFirstLegPrice ?? Infinity) ||
     (left.firstLegDurationMinutes ?? Infinity) - (right.firstLegDurationMinutes ?? Infinity) ||
     left.firstLegDepartureDate.localeCompare(right.firstLegDepartureDate) ||
     left.airportCode.localeCompare(right.airportCode);
+}
+
+function key(candidate: Pick<HubCandidate, "airportCode" | "firstLegDepartureDate">): string {
+  return `${candidate.airportCode.trim().toUpperCase()}:${candidate.firstLegDepartureDate}`;
 }
 
 function uniqueHubs(candidates: Pick<HubCandidate, "airportCode">[]): number {
@@ -127,16 +128,7 @@ function makeCandidate(entry: DirectDestination): DiagnosticCandidate | undefine
 
 // This is selectCalendarCandidateVariants before its final top-N slice.
 function beforeCalendarBudget(candidates: HubCandidate[]): HubCandidate[] {
-  const selected = new Map<string, HubCandidate[]>();
-  for (const candidate of deduplicateHubCandidateVariants(candidates)) {
-    const hub = candidate.airportCode.trim().toUpperCase();
-    const variants = selected.get(hub) ?? [];
-    if (variants.length < MAX_DEPARTURE_VARIANTS_PER_HUB) {
-      variants.push(candidate);
-      selected.set(hub, variants);
-    }
-  }
-  return [...selected.values()].flat().sort(compare);
+  return getCalendarCandidateVariantPool(candidates);
 }
 
 function bucketRows(candidates: DiagnosticCandidate[]) {
@@ -272,7 +264,7 @@ async function run(): Promise<void> {
   )));
   const stage1 = perDate.flat();
   const preBudget = beforeCalendarBudget(stage1);
-  const calendar = preBudget.slice(0, MAX_CALENDAR_CANDIDATES);
+  const calendar = selectCalendarCandidateVariants(stage1);
   const stage1Keys = new Set(stage1.map(key));
   const preBudgetKeys = new Set(preBudget.map(key));
   const calendarKeys = new Set(calendar.map(key));
@@ -297,12 +289,29 @@ async function run(): Promise<void> {
     geographicRank: index + 1, hub: candidate.airportCode, date: candidate.firstLegDepartureDate, detour: candidate.detourRatio,
     geography: candidate.scoreBreakdown.geography, explorePrice: candidate.scoreBreakdown.price,
     exploreDuration: candidate.scoreBreakdown.duration, total: candidate.scoreBreakdown.total,
-    disposition: !stage1Keys.has(key(candidate)) ? "stage1_per_date_candidate_limit" : !preBudgetKeys.has(key(candidate)) ? "hub_variant_limit_or_duplicate" : !calendarKeys.has(key(candidate)) ? "calendar_candidate_limit" : "CALENDAR",
+    disposition: !stage1Keys.has(key(candidate)) ? "stage1_per_date_candidate_limit" : !preBudgetKeys.has(key(candidate)) ? "hub_variant_limit_or_duplicate" : !calendarKeys.has(key(candidate)) ? calendar.some((selected) => selected.airportCode === candidate.airportCode) ? "duplicate_hub_variant_deprioritized" : "calendar_candidate_limit" : "CALENDAR",
   })));
   table("FULL CURRENT ORDER BEFORE CALENDAR BUDGET", preBudget.map((candidate, index) => ({
     rank: index + 1, hub: candidate.airportCode, city: candidate.city, date: candidate.firstLegDepartureDate,
     detour: candidate.detourRatio, stage1Score: candidate.candidateScore, calendar: index < MAX_CALENDAR_CANDIDATES ? "YES" : "NO",
   })));
+  const uniqueHubSlots = Math.min(MAX_CALENDAR_CANDIDATES, uniqueHubs(preBudget));
+  const selectedCalendarKeys = new Set(calendar.map(key));
+  const selectedCalendarHubs = new Set(calendar.map((candidate) => candidate.airportCode));
+  table("CALENDAR SELECTION", preBudget.map((candidate, index) => ({
+    rank: index + 1,
+    hub: candidate.airportCode,
+    date: candidate.firstLegDepartureDate,
+    stage1Score: candidate.candidateScore,
+    selectionReason: selectedCalendarKeys.has(key(candidate))
+      ? calendar.findIndex((selected) => key(selected) === key(candidate)) < uniqueHubSlots
+        ? "unique_hub_first_pass"
+        : "second_variant_fill"
+      : selectedCalendarHubs.has(candidate.airportCode)
+        ? "duplicate_hub_variant_deprioritized"
+        : "not_selected_budget",
+  })));
+  console.log(`Calendar budget: ${MAX_CALENDAR_CANDIDATES}; eligible unique hubs before selection: ${uniqueHubs(preBudget)}; selected variants: ${calendar.length}; selected unique hubs: ${uniqueHubs(calendar)}.`);
   console.log(`Before Calendar budget: ${uniqueHubs(preBudget)} unique hubs / ${preBudget.length} variants. After: ${uniqueHubs(calendar)} unique hubs / ${calendar.length} variants.`);
   const currentHubSet = new Set(geography.map((candidate) => candidate.airportCode));
   table("COUNTERFACTUAL GEOGRAPHY (LOCAL ONLY; NO CALENDAR CALLS)", [1.8, 2, 2.25].map((cutoff) => {
@@ -314,7 +323,13 @@ async function run(): Promise<void> {
     const entries = preBudget.slice(0, budget);
     return { budget: `top ${budget}`, variants: entries.length, uniqueHubs: uniqueHubs(entries), additionalHubs: [...new Set(entries.map((candidate) => candidate.airportCode))].filter((hub) => !currentCalendarHubs.has(hub)).join(", ") };
   }));
-  console.log(`Primary Stage 1 losses: detour_cutoff ${raw.length - geography.length}; stage1_per_date_candidate_limit ${geography.filter((candidate) => !stage1Keys.has(key(candidate))).length}; hub_variant_limit_or_duplicate ${stage1.filter((candidate) => !preBudgetKeys.has(key(candidate))).length}; calendar_candidate_limit ${preBudget.length - calendar.length}.`);
+  const calendarDeprioritizedDuplicates = preBudget.filter((candidate) =>
+    !calendarKeys.has(key(candidate)) && selectedCalendarHubs.has(candidate.airportCode),
+  ).length;
+  const calendarBudgetExcludedHubs = preBudget.filter((candidate) =>
+    !calendarKeys.has(key(candidate)) && !selectedCalendarHubs.has(candidate.airportCode),
+  ).length;
+  console.log(`Primary Stage 1 losses: detour_cutoff ${raw.length - geography.length}; stage1_per_date_candidate_limit ${geography.filter((candidate) => !stage1Keys.has(key(candidate))).length}; hub_variant_limit_or_duplicate ${stage1.filter((candidate) => !preBudgetKeys.has(key(candidate))).length}; duplicate_hub_variant_deprioritized ${calendarDeprioritizedDuplicates}; calendar_candidate_limit ${calendarBudgetExcludedHubs}.`);
 
   const calendarTraces: SearchApiCalendarTrace[] = [];
   const detailedTraces: SearchApiDetailedTrace[] = [];

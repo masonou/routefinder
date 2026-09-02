@@ -162,9 +162,9 @@ export function deduplicateHubCandidateVariants(
   return [...variants.values()].sort(compareHubCandidates);
 }
 
-// Calendar validation is intentionally bounded: no single hub can consume more
-// than two of the eight available variant slots.
-export function selectCalendarCandidateVariants(
+// Calendar validation is intentionally bounded: no single hub can contribute
+// more than two eligible variants. This does not yet consume the global budget.
+export function getCalendarCandidateVariantPool(
   candidates: HubCandidate[],
 ): HubCandidate[] {
   const selectedByHub = new Map<string, HubCandidate[]>();
@@ -178,10 +178,39 @@ export function selectCalendarCandidateVariants(
     }
   }
 
-  return [...selectedByHub.values()]
-    .flat()
-    .sort(compareHubCandidates)
-    .slice(0, MAX_CALENDAR_CANDIDATES);
+  return [...selectedByHub.values()].flat().sort(compareHubCandidates);
+}
+
+// Spend the fixed Calendar budget on a first opportunity for each strong hub
+// before consuming it on another departure-date variant of a hub already seen.
+export function selectCalendarCandidateVariants(
+  candidates: HubCandidate[],
+  maxCalendarCandidates = MAX_CALENDAR_CANDIDATES,
+): HubCandidate[] {
+  const eligibleVariants = getCalendarCandidateVariantPool(candidates);
+  const selected: HubCandidate[] = [];
+  const selectedKeys = new Set<string>();
+  const selectedHubs = new Set<string>();
+
+  // The eligible pool is already in the established deterministic Stage 1
+  // order, so the first variant encountered remains each hub's strongest one.
+  for (const candidate of eligibleVariants) {
+    const hub = candidate.airportCode.trim().toUpperCase();
+    if (selectedHubs.has(hub)) continue;
+    selected.push(candidate);
+    selectedKeys.add(candidateVariantKey(candidate));
+    selectedHubs.add(hub);
+    if (selected.length === maxCalendarCandidates) return selected;
+  }
+
+  // When there are fewer unique hubs than slots, retain the existing global
+  // order for the best unused date variants.
+  for (const candidate of eligibleVariants) {
+    if (selectedKeys.has(candidateVariantKey(candidate))) continue;
+    selected.push(candidate);
+    if (selected.length === maxCalendarCandidates) break;
+  }
+  return selected;
 }
 
 export async function generateHubCandidates(
