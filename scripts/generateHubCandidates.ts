@@ -240,11 +240,13 @@ function printNonstopMismatch(
 }
 
 async function run(): Promise<void> {
+  const searchStartedAt = performance.now();
   if (!origin || !destination || !departureDate) {
     throw new Error("Usage: npm run hubs:debug -- <origin> <destination> <YYYY-MM-DD> [--force-two-stop]");
   }
   const dates = enumerateDateWindow({ start: departureDate, end: addCalendarDays(departureDate, DEPARTURE_FLEX_DAYS) });
   const cache = getDirectDestinationsCache();
+  const exploreStartedAt = performance.now();
   const explore = await Promise.all(dates.map(async (date) => {
     const result = await runCachedDirectDestinations({
       key: buildDirectDestinationsCacheKey({ origin, departureDate: date }),
@@ -253,6 +255,7 @@ async function run(): Promise<void> {
     });
     return { date, ...result };
   }));
+  const exploreWallMs = performance.now() - exploreStartedAt;
   const raw = explore.flatMap((result) => result.value).map(makeCandidate)
     .filter((candidate): candidate is DiagnosticCandidate => candidate !== undefined);
   const geography = raw.filter((candidate) => candidate.detourRatio <= MAX_HUB_DETOUR_RATIO).sort(compare);
@@ -339,11 +342,14 @@ async function run(): Promise<void> {
       onDetailedTrace: (trace) => detailedTraces.push(trace),
     },
   });
+  const cleanCalendarStartedAt = performance.now();
   const cleanValidation = await validateHubCandidates(
     { candidates: calendar, destination },
     diagnosticProvider,
     { mode: "clean" },
   );
+  const cleanCalendarWallMs = performance.now() - cleanCalendarStartedAt;
+  const cleanDetailedStartedAt = performance.now();
   const cleanDetailed = await verifyCandidatesUntilFilled(
     { origin, destination, adults: 1 },
     cleanValidation.topCandidates,
@@ -352,6 +358,7 @@ async function run(): Promise<void> {
     diagnosticProvider,
     { warn: () => {}, onDetailedOffers: (trace) => offerTraces.push(trace) },
   );
+  const cleanDetailedWallMs = performance.now() - cleanDetailedStartedAt;
   const cleanVerifiedHubs = new Set(
     cleanDetailed.verifiedRoutes.map((route) => route.hub.airportCode.trim().toUpperCase()),
   );
@@ -499,6 +506,7 @@ async function run(): Promise<void> {
   const detailedHits = detailedLookups.filter((lookup) => lookup.cacheStatus === "HIT").length;
   const detailedMisses = detailedLookups.filter((lookup) => lookup.cacheStatus === "MISS").length;
   console.log("\nAPI-CALL ACCOUNTING");
+  console.log(`Explore wall: ${(exploreWallMs / 1_000).toFixed(2)}s; Clean Calendar wall: ${(cleanCalendarWallMs / 1_000).toFixed(2)}s; Clean Detailed wall: ${(cleanDetailedWallMs / 1_000).toFixed(2)}s.`);
   console.log(`Live SearchAPI calls: Explore ${explore.length - exploreHits}; Calendar ${calendarMisses} (${calendarHits} cache hits; failures have no cache status); Detailed ${detailedMisses} (${detailedHits} cache hits); total ${explore.length - exploreHits + calendarMisses + detailedMisses}.`);
   if (twoStop) {
     const twoStopLive = twoStop.api.h1ExploreCalls + twoStop.api.firstLegDetailedCalls +
@@ -506,7 +514,9 @@ async function run(): Promise<void> {
       twoStop.api.finalCalendarCalls + twoStop.api.finalDetailedCalls;
     console.log(`Additional two-stop calls: Explore ${twoStop.api.h1ExploreCalls}; first-leg detailed ${twoStop.api.firstLegDetailedCalls}; H1→H2 Calendar ${twoStop.api.middleCalendarCalls}; H1→H2 detailed ${twoStop.api.middleDetailedCalls}; H2→destination Calendar ${twoStop.api.finalCalendarCalls}; H2→destination detailed ${twoStop.api.finalDetailedCalls}; cache hits ${twoStop.api.cacheHits}; total ${twoStopLive}.`);
     console.log(`Total live calls: ${explore.length - exploreHits + calendarMisses + detailedMisses + twoStopLive}.`);
+    console.log(`Two-stop wall: ${(twoStop.timing.twoStopExploreWallMs / 1_000).toFixed(2)}s Explore; ${(twoStop.timing.twoStopCalendarWallMs / 1_000).toFixed(2)}s Calendar; ${(twoStop.timing.twoStopDetailedWallMs / 1_000).toFixed(2)}s Detailed.`);
   }
+  console.log(`Wall-clock diagnostic search: ${((performance.now() - searchStartedAt) / 1_000).toFixed(2)}s.`);
   console.log("Counterfactual cutoff and budget analysis above was local only: zero additional Calendar or Detailed calls.");
 }
 

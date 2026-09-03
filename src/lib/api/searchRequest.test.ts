@@ -90,6 +90,36 @@ test("a cache hit returns cached data without invoking dynamic discovery", async
   });
 });
 
+test("debug timing reports a high-level cache hit with no provider work", async () => {
+  const prior = process.env.SEARCH_DEBUG_TIMINGS;
+  process.env.SEARCH_DEBUG_TIMINGS = "true";
+  try {
+    const result = await runSearchRequest(searchRequest(searchInput()), {
+      cache: {
+        async get() {
+          return {
+            count: 0,
+            itineraries: [],
+            twoStopDiscovery: { explored: false, canExplore: false, reason: "unavailable" },
+          };
+        },
+        async set() {},
+      },
+      async searchDynamicRoutes() {
+        throw new Error("A cache hit must not invoke the planner.");
+      },
+    });
+    assert.equal(result.status, 200);
+    if (!("timing" in result.body)) throw new Error("Expected debug timing metadata.");
+    assert.equal(result.body.timing.searchCacheHit, true);
+    assert.equal(result.body.timing.providerLiveRequests, 0);
+    assert.equal(result.body.timing.providerCacheHits, 0);
+  } finally {
+    if (prior === undefined) delete process.env.SEARCH_DEBUG_TIMINGS;
+    else process.env.SEARCH_DEBUG_TIMINGS = prior;
+  }
+});
+
 test("a cache miss invokes dynamic discovery", async () => {
   let searchCalls = 0;
   const result = await runSearchRequest(searchRequest(searchInput()), {

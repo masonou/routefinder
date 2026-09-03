@@ -41,12 +41,14 @@ export function trackResultsFound({
   adventureCount,
   oneStopAdventureCount,
   twoStopAdventureCount,
+  searchDurationMs,
 }: SearchEventProperties & {
   resultCount: number;
   directCount: number;
   adventureCount: number;
   oneStopAdventureCount?: number;
   twoStopAdventureCount?: number;
+  searchDurationMs?: number;
 }) {
   capture("results_found", {
     origin,
@@ -60,6 +62,7 @@ export function trackResultsFound({
     ...(twoStopAdventureCount === undefined
       ? {}
       : { two_stop_adventure_count: twoStopAdventureCount }),
+    ...(searchDurationMs === undefined ? {} : { search_duration_ms: searchDurationMs }),
   });
 }
 
@@ -83,11 +86,13 @@ export function trackTwoStopExploreCompleted({
   origin,
   destination,
   twoStopCount,
-}: SearchEventProperties & { twoStopCount: number }) {
+  durationMs,
+}: SearchEventProperties & { twoStopCount: number; durationMs?: number }) {
   capture("two_stop_explore_completed", {
     origin,
     destination,
     two_stop_count: twoStopCount,
+    ...(durationMs === undefined ? {} : { duration_ms: durationMs }),
   });
 }
 

@@ -165,6 +165,7 @@ export function ResultsClient({ request }: ResultsClientProps) {
     const abortController = new AbortController();
 
     async function fetchResults() {
+      const startedAt = performance.now();
       setErrorMessage(null);
       setFailure(null);
       setItineraries(null);
@@ -224,10 +225,16 @@ export function ResultsClient({ request }: ResultsClientProps) {
             adventureCount,
             oneStopAdventureCount,
             twoStopAdventureCount,
+            searchDurationMs: Math.round(performance.now() - startedAt),
           });
         }
         setItineraries(deduplicateItineraries(payload.itineraries));
         setTwoStopDiscovery(payload.twoStopDiscovery);
+        if (process.env.NODE_ENV === "development") {
+          requestAnimationFrame(() => console.info("[search-client]", {
+            kind: "initial", durationMs: Math.round(performance.now() - startedAt),
+          }));
+        }
       } catch (error) {
         if (!abortController.signal.aborted) {
           const failureState = createClientFailure(
@@ -265,6 +272,7 @@ export function ResultsClient({ request }: ResultsClientProps) {
   async function exploreTwoStopAdventures() {
     if (twoStopExploreState === "loading") return;
 
+    const startedAt = performance.now();
     const existingOneStopCount = countResultTypes(itineraries ?? []).oneStopAdventureCount;
     trackTwoStopExploreClicked({
       origin: request.origin,
@@ -306,7 +314,13 @@ export function ResultsClient({ request }: ResultsClientProps) {
         origin: request.origin,
         destination: request.destination,
         twoStopCount,
+        durationMs: Math.round(performance.now() - startedAt),
       });
+      if (process.env.NODE_ENV === "development") {
+        requestAnimationFrame(() => console.info("[search-client]", {
+          kind: "two-stop", durationMs: Math.round(performance.now() - startedAt), twoStopCount,
+        }));
+      }
     } catch (error) {
       const failureState = createClientFailure(
         error instanceof TypeError ? "SL-REQUEST-NETWORK" : "SL-SEARCH-UNKNOWN",

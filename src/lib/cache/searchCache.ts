@@ -74,6 +74,10 @@ export function getSearchCache(): SearchCache | null {
 export interface CachedSearchResult {
   value: SearchCacheValue;
   cacheStatus: "HIT" | "MISS";
+  cacheReadMs: number;
+  cacheWriteMs: number;
+  cacheReadError: boolean;
+  cacheWriteError: boolean;
 }
 
 interface RunCachedSearchOptions {
@@ -87,14 +91,22 @@ export async function runCachedSearch(
   options: RunCachedSearchOptions
 ): Promise<CachedSearchResult> {
   const warn = options.warn ?? console.warn;
+  let cacheReadMs = 0;
+  let cacheWriteMs = 0;
+  let cacheReadError = false;
+  let cacheWriteError = false;
 
   if (options.cache) {
+    const startedAt = performance.now();
     try {
       const cachedValue = await options.cache.get(options.key);
+      cacheReadMs = Number((performance.now() - startedAt).toFixed(2));
       if (cachedValue) {
-        return { value: cachedValue, cacheStatus: "HIT" };
+        return { value: cachedValue, cacheStatus: "HIT", cacheReadMs, cacheWriteMs, cacheReadError, cacheWriteError };
       }
     } catch {
+      cacheReadMs = Number((performance.now() - startedAt).toFixed(2));
+      cacheReadError = true;
       warn("Search cache read failed; proceeding without cached result.");
     }
   }
@@ -107,14 +119,18 @@ export async function runCachedSearch(
         ? EMPTY_SEARCH_CACHE_TTL_SECONDS
         : SEARCH_CACHE_TTL_SECONDS;
 
+    const startedAt = performance.now();
     try {
       await options.cache.set(options.key, value, ttlSeconds);
     } catch {
+      cacheWriteError = true;
       warn("Search cache write failed; returning fresh result.");
+    } finally {
+      cacheWriteMs = Number((performance.now() - startedAt).toFixed(2));
     }
   }
 
-  return { value, cacheStatus: "MISS" };
+  return { value, cacheStatus: "MISS", cacheReadMs, cacheWriteMs, cacheReadError, cacheWriteError };
 }
 
 export function getSearchCacheResponseHeaders(

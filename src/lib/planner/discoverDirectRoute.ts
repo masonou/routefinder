@@ -15,6 +15,7 @@ import { createItinerary, type Itinerary } from "../../types/itinerary.ts";
 import type { FlightOffer } from "../../types/flight.ts";
 import { addCalendarDays } from "../utils/dateWindow.ts";
 import { DEPARTURE_FLEX_DAYS } from "../constants/planner.ts";
+import { elapsedMs, nowMs } from "../instrumentation/searchTiming.ts";
 
 // A direct route is a comparison baseline, so it deliberately does not inherit
 // hub detour or stay scoring.
@@ -35,6 +36,15 @@ export interface DirectRouteDiscoveryDependencies {
   calendarCache?: FlightCalendarCache | null;
   flightOffersCache?: FlightOffersCache | null;
   warn?: WarningFunction;
+  onTiming?: (timing: DirectRouteTiming) => void;
+}
+
+export interface DirectRouteTiming {
+  calendarMs: number;
+  calendarCacheStatus?: "HIT" | "MISS";
+  detailedMs: number;
+  detailedCacheStatus?: "HIT" | "MISS";
+  totalMs: number;
 }
 
 export function selectBestDirectCalendarDate(
@@ -84,6 +94,8 @@ export async function discoverDirectItinerary(
   input: DirectRouteDiscoveryInput,
   dependencies: DirectRouteDiscoveryDependencies,
 ): Promise<Itinerary | undefined> {
+  const startedAt = nowMs();
+  const timing: DirectRouteTiming = { calendarMs: 0, detailedMs: 0, totalMs: 0 };
   const origin = input.origin.trim().toUpperCase();
   const destination = input.destination.trim().toUpperCase();
   const startDate = input.earliestDeparture;
@@ -99,6 +111,7 @@ export async function discoverDirectItinerary(
   const warn = dependencies.warn ?? console.warn;
 
   try {
+    const calendarStartedAt = nowMs();
     const calendar = await runCachedFlightCalendar({
       key: buildFlightCalendarCacheKey({
         origin,
@@ -117,9 +130,12 @@ export async function discoverDirectItinerary(
         }),
       warn,
     });
+    timing.calendarMs = elapsedMs(calendarStartedAt);
+    timing.calendarCacheStatus = calendar.cacheStatus;
     const selectedDate = selectBestDirectCalendarDate(calendar.value, startDate, endDate);
     if (!selectedDate) return undefined;
 
+    const detailedStartedAt = nowMs();
     const detailed = await runCachedFlightOffers({
       key: buildFlightOffersCacheKey({
         origin,
@@ -137,6 +153,8 @@ export async function discoverDirectItinerary(
         }),
       warn,
     });
+    timing.detailedMs = elapsedMs(detailedStartedAt);
+    timing.detailedCacheStatus = detailed.cacheStatus;
     const directOffer = selectBestDirectOffer(
       detailed.value,
       origin,
@@ -162,5 +180,8 @@ export async function discoverDirectItinerary(
       : "Direct route discovery failed.";
     warn(`Direct route discovery failed for ${origin}-${destination}: ${message}`);
     return undefined;
+  } finally {
+    timing.totalMs = elapsedMs(startedAt);
+    dependencies.onTiming?.(timing);
   }
 }

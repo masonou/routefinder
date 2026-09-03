@@ -45,6 +45,7 @@ import { distanceKm, type Coordinates } from "../utils/geography.ts";
 import { isFlightWithinDepartureWindow, isReasonableFlight } from "./filters.ts";
 import type { HubCandidate } from "./hubCandidates.ts";
 import type { DetailedOfferTrace } from "./verifyHubCandidates.ts";
+import { elapsedMs, nowMs, type RequestTiming } from "../instrumentation/searchTiming.ts";
 import type { ValidatedHubCandidate } from "./validateHubCandidates.ts";
 
 type WarningFunction = (message: string) => void;
@@ -174,6 +175,7 @@ export interface TwoStopDiscoveryResult {
   /** Number of H1 branches that ended in a provider/cache technical failure. */
   technicalFailureCount: number;
   api: TwoStopApiAccounting;
+  timing: Pick<RequestTiming, "twoStopH1SelectionMs" | "twoStopExploreWallMs" | "twoStopExploreRequests" | "twoStopExploreLiveRequests" | "twoStopExploreCacheHits" | "twoStopPairCandidateProcessingMs" | "twoStopCalendarWallMs" | "twoStopCalendarRequests" | "twoStopCalendarLiveRequests" | "twoStopCalendarCacheHits" | "twoStopDetailedWallMs" | "twoStopDetailedRequests" | "twoStopDetailedLiveRequests" | "twoStopDetailedCacheHits">;
 }
 
 interface VerifiedTwoStopRoute {
@@ -342,7 +344,9 @@ export async function discoverTwoStopRoutes(
   input: DiscoverTwoStopRoutesInput,
   dependencies: DiscoverTwoStopRoutesDependencies,
 ): Promise<TwoStopDiscoveryResult> {
+  const h1SelectionStartedAt = nowMs();
   const h1Candidates = h1Selection(input.h1Candidates);
+  const twoStopH1SelectionMs = elapsedMs(h1SelectionStartedAt);
   const directDestinationsCache = dependencies.directDestinationsCache === undefined
     ? getDirectDestinationsCache()
     : dependencies.directDestinationsCache;
@@ -361,10 +365,19 @@ export async function discoverTwoStopRoutes(
   const h2Candidates: Array<{ h1: string; candidates: TwoStopH2Candidate[] }> = [];
   const verified: VerifiedTwoStopRoute[] = [];
   let attemptedPairs = 0;
+  let twoStopExploreWallMs = 0;
+  let twoStopPairCandidateProcessingMs = 0;
+  let twoStopCalendarWallMs = 0;
+  let twoStopDetailedWallMs = 0;
+  const stageCache = { explore: [] as Array<"HIT" | "MISS">, calendar: [] as Array<"HIT" | "MISS">, detailed: [] as Array<"HIT" | "MISS"> };
   const warn = dependencies.warn ?? console.warn;
   const recordCache = (status: "HIT" | "MISS", field: keyof Omit<TwoStopApiAccounting, "cacheHits">) => {
     if (status === "HIT") api.cacheHits += 1;
     else api[field] += 1;
+  };
+  const recordStageCache = (stage: keyof typeof stageCache, status: "HIT" | "MISS", field: keyof Omit<TwoStopApiAccounting, "cacheHits">) => {
+    stageCache[stage].push(status);
+    recordCache(status, field);
   };
   const origin = input.origin.trim().toUpperCase();
   const destination = input.destination.trim().toUpperCase();
@@ -372,13 +385,15 @@ export async function discoverTwoStopRoutes(
   for (const h1 of h1Candidates) {
     if (verified.length >= input.targetResults || attemptedPairs >= MAX_TWO_STOP_PAIR_ATTEMPTS) break;
     try {
+      const firstDetailedStartedAt = nowMs();
       const firstResult = await runCachedFlightOffers({
         key: buildFlightOffersCacheKey({ origin, destination: h1.airportCode, departureDate: h1.firstLegDepartureDate, adults: input.adults }),
         cache: flightOffersCache,
         load: () => dependencies.flightProvider.searchOneWay({ origin, destination: h1.airportCode, departureWindow: { start: h1.firstLegDepartureDate, end: h1.firstLegDepartureDate }, adults: input.adults }),
         warn,
       });
-      recordCache(firstResult.cacheStatus, "firstLegDetailedCalls");
+      twoStopDetailedWallMs += elapsedMs(firstDetailedStartedAt);
+      recordStageCache("detailed", firstResult.cacheStatus, "firstLegDetailedCalls");
       const firstLeg = selectNonstopOffer(firstResult.value, origin, h1.airportCode, h1.firstLegDepartureDate);
       const h1ArrivalDate = firstLeg ? localDate(firstLeg.arrivalAt) : undefined;
       if (!firstLeg || !h1ArrivalDate) {
@@ -386,53 +401,65 @@ export async function discoverTwoStopRoutes(
         continue;
       }
       const exploreDate = addCalendarDays(h1ArrivalDate, TARGET_TWO_STOP_STAY_NIGHTS);
+      const exploreStartedAt = nowMs();
       const exploreResult = await runCachedDirectDestinations({
         key: buildDirectDestinationsCacheKey({ origin: h1.airportCode, departureDate: exploreDate }),
         cache: directDestinationsCache,
         load: () => dependencies.directDestinationsProvider.getDirectDestinations({ origin: h1.airportCode, departureDate: exploreDate }),
         warn,
       });
-      recordCache(exploreResult.cacheStatus, "h1ExploreCalls");
+      twoStopExploreWallMs += elapsedMs(exploreStartedAt);
+      recordStageCache("explore", exploreResult.cacheStatus, "h1ExploreCalls");
+      const pairProcessingStartedAt = nowMs();
       const rankedH2 = rankTwoStopH2Candidates({
         origin, h1, destination, exploreDestinations: exploreResult.value,
         observedConnections: input.observedConnections.get(h1.airportCode.trim().toUpperCase()) ?? [],
       });
+      twoStopPairCandidateProcessingMs += elapsedMs(pairProcessingStartedAt);
       h2Candidates.push({ h1: h1.airportCode, candidates: rankedH2 });
       for (const h2 of rankedH2) {
         if (verified.length >= input.targetResults || attemptedPairs >= MAX_TWO_STOP_PAIR_ATTEMPTS) break;
         attemptedPairs += 1;
+        const middleCalendarStartedAt = nowMs();
         const middleCalendar = await runCachedFlightCalendar({
           key: buildFlightCalendarCacheKey({ origin: h1.airportCode, destination: h2.airportCode, startDate: addCalendarDays(h1ArrivalDate, MIN_TWO_STOP_STAY_NIGHTS), endDate: addCalendarDays(h1ArrivalDate, MAX_TWO_STOP_STAY_NIGHTS), stopPolicy: "nonstop" }),
           cache: flightCalendarCache,
           load: () => dependencies.flightCalendarProvider.getFlightCalendar({ origin: h1.airportCode, destination: h2.airportCode, departureWindow: { start: addCalendarDays(h1ArrivalDate, MIN_TWO_STOP_STAY_NIGHTS), end: addCalendarDays(h1ArrivalDate, MAX_TWO_STOP_STAY_NIGHTS) }, stopPolicy: "nonstop" }),
           warn,
         });
-        recordCache(middleCalendar.cacheStatus, "middleCalendarCalls");
+        twoStopCalendarWallMs += elapsedMs(middleCalendarStartedAt);
+        recordStageCache("calendar", middleCalendar.cacheStatus, "middleCalendarCalls");
         const middleDate = selectCalendarDate(h1ArrivalDate, middleCalendar.value);
         if (!middleDate) continue;
+        const middleDetailedStartedAt = nowMs();
         const middleResult = await runCachedFlightOffers({
           key: buildFlightOffersCacheKey({ origin: h1.airportCode, destination: h2.airportCode, departureDate: middleDate.departureDate, adults: input.adults }),
           cache: flightOffersCache,
           load: () => dependencies.flightProvider.searchOneWay({ origin: h1.airportCode, destination: h2.airportCode, departureWindow: { start: middleDate.departureDate, end: middleDate.departureDate }, adults: input.adults }), warn,
         });
-        recordCache(middleResult.cacheStatus, "middleDetailedCalls");
+        twoStopDetailedWallMs += elapsedMs(middleDetailedStartedAt);
+        recordStageCache("detailed", middleResult.cacheStatus, "middleDetailedCalls");
         const middleLeg = selectNonstopOffer(middleResult.value, h1.airportCode, h2.airportCode, middleDate.departureDate);
         const h2ArrivalDate = middleLeg ? localDate(middleLeg.arrivalAt) : undefined;
         if (!middleLeg || !h2ArrivalDate) continue;
+        const finalCalendarStartedAt = nowMs();
         const finalCalendar = await runCachedFlightCalendar({
           key: buildFlightCalendarCacheKey({ origin: h2.airportCode, destination, startDate: addCalendarDays(h2ArrivalDate, MIN_TWO_STOP_STAY_NIGHTS), endDate: addCalendarDays(h2ArrivalDate, MAX_TWO_STOP_STAY_NIGHTS), stopPolicy: "nonstop" }),
           cache: flightCalendarCache,
           load: () => dependencies.flightCalendarProvider.getFlightCalendar({ origin: h2.airportCode, destination, departureWindow: { start: addCalendarDays(h2ArrivalDate, MIN_TWO_STOP_STAY_NIGHTS), end: addCalendarDays(h2ArrivalDate, MAX_TWO_STOP_STAY_NIGHTS) }, stopPolicy: "nonstop" }), warn,
         });
-        recordCache(finalCalendar.cacheStatus, "finalCalendarCalls");
+        twoStopCalendarWallMs += elapsedMs(finalCalendarStartedAt);
+        recordStageCache("calendar", finalCalendar.cacheStatus, "finalCalendarCalls");
         const finalDate = selectCalendarDate(h2ArrivalDate, finalCalendar.value);
         if (!finalDate) continue;
+        const finalDetailedStartedAt = nowMs();
         const finalResult = await runCachedFlightOffers({
           key: buildFlightOffersCacheKey({ origin: h2.airportCode, destination, departureDate: finalDate.departureDate, adults: input.adults }),
           cache: flightOffersCache,
           load: () => dependencies.flightProvider.searchOneWay({ origin: h2.airportCode, destination, departureWindow: { start: finalDate.departureDate, end: finalDate.departureDate }, adults: input.adults }), warn,
         });
-        recordCache(finalResult.cacheStatus, "finalDetailedCalls");
+        twoStopDetailedWallMs += elapsedMs(finalDetailedStartedAt);
+        recordStageCache("detailed", finalResult.cacheStatus, "finalDetailedCalls");
         const finalLeg = selectNonstopOffer(finalResult.value, h2.airportCode, destination, finalDate.departureDate);
         if (!finalLeg) continue;
         const price = totalPrice([firstLeg, middleLeg, finalLeg]);
@@ -462,5 +489,21 @@ export async function discoverTwoStopRoutes(
       score: route.scoreBreakdown,
     })),
     h1Candidates, h2Candidates, attemptedPairs, failures, technicalFailureCount, api,
+    timing: {
+      twoStopH1SelectionMs,
+      twoStopExploreWallMs: Number(twoStopExploreWallMs.toFixed(2)),
+      twoStopExploreRequests: stageCache.explore.length,
+      twoStopExploreLiveRequests: stageCache.explore.filter((status) => status === "MISS").length,
+      twoStopExploreCacheHits: stageCache.explore.filter((status) => status === "HIT").length,
+      twoStopPairCandidateProcessingMs: Number(twoStopPairCandidateProcessingMs.toFixed(2)),
+      twoStopCalendarWallMs: Number(twoStopCalendarWallMs.toFixed(2)),
+      twoStopCalendarRequests: stageCache.calendar.length,
+      twoStopCalendarLiveRequests: stageCache.calendar.filter((status) => status === "MISS").length,
+      twoStopCalendarCacheHits: stageCache.calendar.filter((status) => status === "HIT").length,
+      twoStopDetailedWallMs: Number(twoStopDetailedWallMs.toFixed(2)),
+      twoStopDetailedRequests: stageCache.detailed.length,
+      twoStopDetailedLiveRequests: stageCache.detailed.filter((status) => status === "MISS").length,
+      twoStopDetailedCacheHits: stageCache.detailed.filter((status) => status === "HIT").length,
+    },
   };
 }

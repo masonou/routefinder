@@ -53,11 +53,21 @@ export interface SearchApiDetailedTrace {
   parserRejections: Record<string, number>;
 }
 
+export interface SearchApiRequestTiming {
+  engine: string;
+  route?: string;
+  date?: string;
+  durationMs: number;
+  status?: number;
+  success: boolean;
+}
+
 // Optional and used only by the debug command. These hooks observe the same
 // provider responses; they never alter a request, parser decision, or result.
 export interface SearchApiDiagnosticHooks {
   onCalendarTrace?: (trace: SearchApiCalendarTrace) => void;
   onDetailedTrace?: (trace: SearchApiDetailedTrace) => void;
+  onRequestTiming?: (timing: SearchApiRequestTiming) => void;
 }
 
 type ResolvedSearchApiOptions = Required<
@@ -503,12 +513,7 @@ function deduplicateDirectDestinations(
 
 async function fetchDirectDestinations(
   input: DirectDestinationsInput,
-  options: Required<
-    Pick<
-      SearchApiFlightProviderOptions,
-      "apiKey" | "fetch" | "endpoint" | "timeoutMs"
-    >
-  >,
+  options: ResolvedSearchApiOptions,
 ): Promise<DirectDestination[]> {
   const query = new URLSearchParams({
     engine: "google_travel_explore",
@@ -523,7 +528,7 @@ async function fetchDirectDestinations(
 
   let response: Response;
   try {
-    response = await options.fetch(`${options.endpoint}?${query.toString()}`, {
+    response = await fetchWithTiming(query, options, {
       method: "GET",
       headers: { Authorization: `Bearer ${options.apiKey}` },
       signal: controller.signal,
@@ -610,6 +615,38 @@ function queryRecord(query: URLSearchParams): Record<string, string> {
   return Object.fromEntries(query.entries());
 }
 
+async function fetchWithTiming(
+  query: URLSearchParams,
+  options: ResolvedSearchApiOptions,
+  init: RequestInit,
+): Promise<Response> {
+  const startedAt = performance.now();
+  const departure = query.get("departure_id") ?? undefined;
+  const arrival = query.get("arrival_id") ?? undefined;
+  const timing = (status: number | undefined, success: boolean) => {
+    const value: SearchApiRequestTiming = {
+      engine: query.get("engine") ?? "unknown",
+      ...(departure && arrival ? { route: `${departure}-${arrival}` } : departure ? { route: departure } : {}),
+      ...(query.get("outbound_date") ?? query.get("time_period")
+        ? { date: query.get("outbound_date") ?? query.get("time_period") ?? undefined }
+        : {}),
+      durationMs: Number((performance.now() - startedAt).toFixed(2)),
+      ...(status === undefined ? {} : { status }),
+      success,
+    };
+    options.diagnostics?.onRequestTiming?.(value);
+    if (process.env.SEARCH_DEBUG_TIMINGS === "true") console.info("[searchapi]", JSON.stringify(value));
+  };
+  try {
+    const response = await options.fetch(`${options.endpoint}?${query.toString()}`, init);
+    timing(response.status, response.ok);
+    return response;
+  } catch (error) {
+    timing(undefined, false);
+    throw error;
+  }
+}
+
 function buildFlightCalendarQuery(input: FlightCalendarInput): URLSearchParams {
   return new URLSearchParams({
     engine: "google_flights_calendar",
@@ -651,7 +688,7 @@ async function fetchFlightCalendar(
 
   let response: Response;
   try {
-    response = await options.fetch(`${options.endpoint}?${query.toString()}`, {
+    response = await fetchWithTiming(query, options, {
       method: "GET",
       headers: { Authorization: `Bearer ${options.apiKey}` },
       signal: controller.signal,
@@ -727,7 +764,7 @@ async function searchExactDate(
 
   let response: Response;
   try {
-    response = await options.fetch(`${options.endpoint}?${query.toString()}`, {
+    response = await fetchWithTiming(query, options, {
       method: "GET",
       headers: {
         Authorization: `Bearer ${options.apiKey}`,
@@ -857,6 +894,7 @@ export class SearchApiFlightProvider
       fetch: this.options.fetch ?? globalThis.fetch,
       endpoint: this.options.endpoint ?? SEARCH_API_URL,
       timeoutMs: this.options.timeoutMs ?? SEARCH_API_TIMEOUT_MS,
+      diagnostics: this.options.diagnostics,
     });
   }
 

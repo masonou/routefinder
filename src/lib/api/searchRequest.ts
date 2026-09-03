@@ -20,6 +20,7 @@ import type { SearchCache } from "../cache/searchCache.ts";
 import type { Itinerary } from "../../types/itinerary.ts";
 import type { DynamicSearchResult } from "../../types/search.ts";
 import type { TripRequest } from "../../types/trip.ts";
+import { elapsedMs, emptyRequestTiming, nowMs, summarizeSearchTiming, type SearchTiming } from "../instrumentation/searchTiming.ts";
 
 type DynamicSearchFunction = (
   request: TripRequest,
@@ -48,6 +49,7 @@ export async function runSearchRequest(
   request: Request,
   dependencies: SearchRequestDependencies = {}
 ): Promise<SearchRequestResult> {
+  const searchStartedAt = nowMs();
   let body: unknown;
 
   try {
@@ -81,10 +83,32 @@ export async function runSearchRequest(
         return result;
       },
     });
+    const plannerTiming = searchResult.cacheStatus === "HIT"
+      ? emptyRequestTiming()
+      : searchResult.value.timing ?? emptyRequestTiming();
+    const timing: SearchTiming = {
+      ...plannerTiming,
+      searchTotalMs: elapsedMs(searchStartedAt),
+      searchCacheReadMs: searchResult.cacheReadMs,
+      searchCacheWriteMs: searchResult.cacheWriteMs,
+      searchCacheHit: searchResult.cacheStatus === "HIT",
+      ...(searchRequest.forceTwoStop === true
+        ? { forcedTwoStopRequestTotalMs: elapsedMs(searchStartedAt) }
+        : {}),
+    };
+    summarizeSearchTiming(timing, `${searchRequest.origin}→${searchRequest.destination} ${searchRequest.earliestDeparture}`);
+    // Detailed timing is server-only by default. Strip the planner's internal
+    // timing before serialising, then attach the safe aggregate only when a
+    // local debug session explicitly asks for it.
+    const publicResult = { ...searchResult.value };
+    delete publicResult.timing;
+    const responseBody = process.env.SEARCH_DEBUG_TIMINGS === "true"
+      ? { ...publicResult, timing }
+      : publicResult;
 
     return {
       status: 200,
-      body: searchResult.value,
+      body: responseBody,
       headers: getSearchCacheResponseHeaders(searchResult.cacheStatus),
     };
   } catch (error) {

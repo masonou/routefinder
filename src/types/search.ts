@@ -1,4 +1,5 @@
 import type { Itinerary } from "./itinerary.ts";
+import type { RequestTiming } from "../lib/instrumentation/searchTiming.ts";
 
 export type TwoStopDiscoveryReason =
   | "already_explored"
@@ -18,4 +19,6 @@ export interface DynamicSearchResult {
   count: number;
   itineraries: Itinerary[];
   twoStopDiscovery: TwoStopDiscoveryMetadata;
+  /** Server-only unless SEARCH_DEBUG_TIMINGS is enabled. */
+  timing?: RequestTiming;
 }

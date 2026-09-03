@@ -61,6 +61,14 @@ import type {
   DynamicSearchResult,
   TwoStopDiscoveryMetadata,
 } from "../../types/search.ts";
+import {
+  countCacheStatuses,
+  elapsedMs,
+  emptyRequestTiming,
+  nowMs,
+  type RequestTiming,
+} from "../instrumentation/searchTiming.ts";
+import type { DirectRouteTiming } from "./discoverDirectRoute.ts";
 
 type WarningFunction = (message: string) => void;
 
@@ -94,6 +102,7 @@ export interface FlexibleHubDiscoveryResult {
   candidates: HubCandidate[];
   calendarCandidates: HubCandidate[];
   failures: { departureDate: string; message: string }[];
+  timing: Pick<RequestTiming, "exploreWallMs" | "exploreRequests" | "exploreLiveRequests" | "exploreCacheHits" | "stage1ProcessingMs">;
 }
 
 export function toDynamicItinerary(route: VerifiedHubRoute): Itinerary {
@@ -247,9 +256,11 @@ export async function discoverFlexibleHubCandidates(
   const warn = dependencies.warn ?? console.warn;
   const departureDates = getInitialDepartureDates(input.earliestDeparture);
 
+  const exploreStartedAt = nowMs();
   const exploreResults = await Promise.all(
     departureDates.map(async (departureDate): Promise<ExploreDiscoveryResult & {
       candidates?: HubCandidate[];
+      stage1ProcessingMs?: number;
       cause?: ReturnType<typeof normalizeSearchApiError>;
     }> => {
       try {
@@ -266,15 +277,11 @@ export async function discoverFlexibleHubCandidates(
             }),
           warn,
         });
+        const stage1StartedAt = nowMs();
         const candidates = await generateHubCandidates(
-          {
-            origin: input.origin,
-            destination: input.destination,
-            departureDate,
-          },
+          { origin: input.origin, destination: input.destination, departureDate },
           { getDirectDestinations: async () => result.value },
         );
-
         return {
           departureDate,
           directDestinationCount: result.value.length,
@@ -282,6 +289,7 @@ export async function discoverFlexibleHubCandidates(
           hubCodes: [...new Set(candidates.map((candidate) => candidate.airportCode))],
           cacheStatus: result.cacheStatus,
           candidates,
+          stage1ProcessingMs: elapsedMs(stage1StartedAt),
         };
       } catch (error) {
         const cause = normalizeSearchApiError(error);
@@ -291,6 +299,7 @@ export async function discoverFlexibleHubCandidates(
       }
     }),
   );
+  const exploreWallMs = elapsedMs(exploreStartedAt);
   const failures = exploreResults
     .filter((result) => result.error !== undefined)
     .map(({ departureDate, error }) => ({
@@ -305,7 +314,15 @@ export async function discoverFlexibleHubCandidates(
     );
   }
 
-  const candidates = exploreResults.flatMap((result) => result.candidates ?? []);
+  // This is local CPU time only. Candidate work already runs in the existing
+  // Explore promise branch, so recording it here does not move or serialize it.
+  const stage1ProcessingMs = Number(exploreResults.reduce(
+    (sum, result) => sum + ("stage1ProcessingMs" in result ? result.stage1ProcessingMs ?? 0 : 0), 0,
+  ).toFixed(2));
+  const candidates = exploreResults.flatMap((result) => ("candidates" in result ? result.candidates ?? [] : []));
+  const exploreCounts = countCacheStatuses(
+    exploreResults.flatMap((result) => result.cacheStatus ? [{ cacheStatus: result.cacheStatus }] : []),
+  );
   return {
     departureDates,
     exploreResults: exploreResults.map((result) => ({
@@ -323,6 +340,7 @@ export async function discoverFlexibleHubCandidates(
     candidates,
     calendarCandidates: selectCalendarCandidateVariants(candidates),
     failures,
+    timing: { exploreWallMs, ...exploreCounts, stage1ProcessingMs },
   };
 }
 
@@ -341,6 +359,8 @@ export async function searchDynamicRoutePortfolio(
   options: DynamicSearchOptions = {},
   dependencies: DynamicSearchDependencies = {},
 ): Promise<DynamicSearchResult> {
+  const timing = emptyRequestTiming();
+  timing.twoStopForced = options.forceTwoStop === true;
   const flightCalendarProvider =
     dependencies.flightCalendarProvider ?? searchApiFlightCalendarProvider;
   const flightProvider = dependencies.flightProvider ?? searchApiFlightProvider;
@@ -352,6 +372,7 @@ export async function searchDynamicRoutePortfolio(
     : 0;
   // The direct baseline is independent from hub exploration and intentionally
   // continues in parallel with the adventure pipeline.
+  let directTiming: DirectRouteTiming | undefined;
   const directItineraryPromise = discoverDirectItinerary(
     {
       origin: request.origin,
@@ -365,6 +386,7 @@ export async function searchDynamicRoutePortfolio(
       calendarCache: dependencies.flightCalendarCache,
       flightOffersCache: dependencies.flightOffersCache,
       warn,
+      onTiming: (value) => { directTiming = value; },
     },
   );
   const discovery = await discoverFlexibleHubCandidates(
@@ -379,6 +401,7 @@ export async function searchDynamicRoutePortfolio(
       warn,
     },
   );
+  Object.assign(timing, discovery.timing);
   const candidates = discovery.calendarCandidates;
   if (candidates.length === 0) {
     const directItinerary = await directItineraryPromise;
@@ -387,20 +410,25 @@ export async function searchDynamicRoutePortfolio(
       count: itineraries.length,
       itineraries,
       twoStopDiscovery: twoStopUnavailableForDistance(directDistanceKm),
+      timing: refreshProviderCounts(applyDirectTiming(timing, directTiming)),
     };
   }
 
+  const cleanCalendarStartedAt = nowMs();
   const cleanValidation = await validateHubCandidates(
     { candidates, destination: request.destination },
     flightCalendarProvider,
     { cache: dependencies.flightCalendarCache, warn, mode: "clean" },
   );
+  timing.cleanCalendarWallMs = elapsedMs(cleanCalendarStartedAt);
+  Object.assign(timing, prefixCounts("cleanCalendar", countCacheStatuses(cleanValidation.calendarLookups)));
   throwIfAllStageRequestsFailed(
     "calendar",
     Math.min(candidates.length, 8),
     cleanValidation.failures,
   );
   const detailedTraces: DetailedOfferTrace[] = [];
+  const cleanDetailedStartedAt = nowMs();
   const cleanVerification = await verifyCandidatesUntilFilled(
     request,
     cleanValidation.topCandidates,
@@ -413,6 +441,8 @@ export async function searchDynamicRoutePortfolio(
       onDetailedOffers: (trace) => detailedTraces.push(trace),
     },
   );
+  timing.cleanDetailedWallMs = elapsedMs(cleanDetailedStartedAt);
+  Object.assign(timing, prefixCounts("cleanDetailed", countCacheStatuses(cleanVerification.detailedLookups)));
   const cleanVerifiedHubs = new Set(
     cleanVerification.verifiedRoutes.map((route) => route.hub.airportCode.trim().toUpperCase()),
   );
@@ -420,6 +450,8 @@ export async function searchDynamicRoutePortfolio(
   const fallbackPool = candidates.filter(
     (candidate) => !cleanVerifiedHubs.has(candidate.airportCode.trim().toUpperCase()),
   );
+  timing.fallbackTriggered = remainingSlots > 0;
+  const fallbackCalendarStartedAt = nowMs();
   const fallbackValidation = remainingSlots > 0
     ? await validateHubCandidates(
       { candidates: fallbackPool, destination: request.destination },
@@ -427,6 +459,11 @@ export async function searchDynamicRoutePortfolio(
       { cache: dependencies.flightCalendarCache, warn, mode: "fallback" },
     )
     : undefined;
+  if (fallbackValidation) {
+    timing.fallbackCalendarWallMs = elapsedMs(fallbackCalendarStartedAt);
+    Object.assign(timing, prefixCounts("fallbackCalendar", countCacheStatuses(fallbackValidation.calendarLookups)));
+  }
+  const fallbackDetailedStartedAt = nowMs();
   const fallbackVerification = fallbackValidation
     ? await verifyCandidatesUntilFilled(
       request,
@@ -447,6 +484,10 @@ export async function searchDynamicRoutePortfolio(
       detailedLookups: [],
       attemptedCandidates: 0,
     };
+  if (fallbackValidation) {
+    timing.fallbackDetailedWallMs = elapsedMs(fallbackDetailedStartedAt);
+    Object.assign(timing, prefixCounts("fallbackDetailed", countCacheStatuses(fallbackVerification.detailedLookups)));
+  }
 
   const verifiedRoutes = [
     ...cleanVerification.verifiedRoutes,
@@ -487,6 +528,8 @@ export async function searchDynamicRoutePortfolio(
       : { explored: false, canExplore: false, reason: "route_too_short" };
   let twoStopAdventures: Itinerary[] = [];
   if (shouldRunTwoStopDiscovery) {
+    timing.twoStopTriggered = true;
+    const twoStopStartedAt = nowMs();
     // Capture existing detailed H1→destination evidence without changing how
     // the one-stop verifier selects an offer. This lets connections inform H2
     // discovery while Explore remains an independent source.
@@ -518,6 +561,7 @@ export async function searchDynamicRoutePortfolio(
         },
       );
       twoStopAdventures = result.itineraries;
+      Object.assign(timing, result.timing);
       // The regular search treats two-stop exploration as supplementary. For
       // an explicit expansion, however, a total technical failure deserves a
       // structured response so the existing portfolio can remain on screen
@@ -535,16 +579,46 @@ export async function searchDynamicRoutePortfolio(
       // turn an otherwise useful direct/one-stop result into a failed search.
       warn(`Optional two-stop discovery failed: ${error instanceof Error ? error.message : "Unknown error."}`);
       if (options.forceTwoStop === true) throw error;
+    } finally {
+      timing.twoStopTotalMs = elapsedMs(twoStopStartedAt);
     }
   }
   const directItinerary = await directItineraryPromise;
+  applyDirectTiming(timing, directTiming);
+  refreshProviderCounts(timing);
   // Result categories are independent: a verified two-stop route never
   // displaces a verified one-stop route merely to satisfy a combined cap.
   const itineraries = appendDirectBaseline(
     [...oneStopAdventures, ...twoStopAdventures],
     directItinerary,
   );
-  return { count: itineraries.length, itineraries, twoStopDiscovery };
+  return { count: itineraries.length, itineraries, twoStopDiscovery, timing };
+}
+
+function prefixCounts(prefix: "cleanCalendar" | "cleanDetailed" | "fallbackCalendar" | "fallbackDetailed", counts: ReturnType<typeof countCacheStatuses>) {
+  return {
+    [`${prefix}Requests`]: counts.requests,
+    [`${prefix}LiveRequests`]: counts.liveRequests,
+    [`${prefix}CacheHits`]: counts.cacheHits,
+  } as Partial<RequestTiming>;
+}
+
+function applyDirectTiming(timing: RequestTiming, direct: DirectRouteTiming | undefined): RequestTiming {
+  if (!direct) return timing;
+  timing.directCalendarMs = direct.calendarMs;
+  timing.directDetailedMs = direct.detailedMs;
+  timing.directTotalMs = direct.totalMs;
+  timing.directCalendarLiveRequests = direct.calendarCacheStatus === "MISS" ? 1 : 0;
+  timing.directCalendarCacheHits = direct.calendarCacheStatus === "HIT" ? 1 : 0;
+  timing.directDetailedLiveRequests = direct.detailedCacheStatus === "MISS" ? 1 : 0;
+  timing.directDetailedCacheHits = direct.detailedCacheStatus === "HIT" ? 1 : 0;
+  return timing;
+}
+
+function refreshProviderCounts(timing: RequestTiming): RequestTiming {
+  timing.providerLiveRequests = timing.exploreLiveRequests + timing.cleanCalendarLiveRequests + timing.cleanDetailedLiveRequests + timing.fallbackCalendarLiveRequests + timing.fallbackDetailedLiveRequests + timing.directCalendarLiveRequests + timing.directDetailedLiveRequests + timing.twoStopExploreLiveRequests + timing.twoStopCalendarLiveRequests + timing.twoStopDetailedLiveRequests;
+  timing.providerCacheHits = timing.exploreCacheHits + timing.cleanCalendarCacheHits + timing.cleanDetailedCacheHits + timing.fallbackCalendarCacheHits + timing.fallbackDetailedCacheHits + timing.directCalendarCacheHits + timing.directDetailedCacheHits + timing.twoStopExploreCacheHits + timing.twoStopCalendarCacheHits + timing.twoStopDetailedCacheHits;
+  return timing;
 }
 
 /** Backwards-compatible itinerary-only entry point for planner consumers. */
