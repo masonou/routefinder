@@ -12,6 +12,7 @@ import {
 interface SearchLoadingStateProps {
   origin: string;
   destination: string;
+  compact?: boolean;
 }
 
 function SkeletonItinerary() {
@@ -36,6 +37,7 @@ function SkeletonItinerary() {
 export function SearchLoadingState({
   origin,
   destination,
+  compact = false,
 }: SearchLoadingStateProps) {
   const [statusIndex, setStatusIndex] = useState(0);
 
@@ -49,16 +51,16 @@ export function SearchLoadingState({
 
   return (
     <section
-      className="mx-auto min-w-0 w-full max-w-2xl py-2 sm:py-4"
+      className={`mx-auto min-w-0 w-full max-w-2xl ${compact ? "py-0" : "py-2 sm:py-4"}`}
       aria-busy="true"
       aria-describedby="search-loading-announcement"
     >
       <div className="text-center">
-        <h2 className="wrap-break-word text-xl font-semibold tracking-tight text-slate-950 sm:text-2xl">
+        <h2 className={`${compact ? "text-base" : "text-xl sm:text-2xl"} wrap-break-word font-semibold tracking-tight text-slate-950`}>
           Finding routes worth taking
         </h2>
         <div
-          className="mx-auto mt-8 flex w-full max-w-md items-center gap-3 px-1 text-xs font-semibold tracking-[0.12em] text-slate-500"
+          className={`${compact ? "mt-4" : "mt-8"} mx-auto flex w-full max-w-md items-center gap-3 px-1 text-xs font-semibold tracking-[0.12em] text-slate-500`}
           aria-hidden="true"
         >
           <span className="shrink-0">{origin}</span>
@@ -95,11 +97,11 @@ export function SearchLoadingState({
         </p>
       </div>
 
-      <div className="mt-10 space-y-3" aria-hidden="true">
+      {!compact ? <div className="mt-10 space-y-3" aria-hidden="true">
         <SkeletonItinerary />
         <SkeletonItinerary />
         <SkeletonItinerary />
-      </div>
+      </div> : null}
     </section>
   );
 }

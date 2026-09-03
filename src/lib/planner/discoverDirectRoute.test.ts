@@ -61,6 +61,7 @@ test("builds a direct itinerary from the cheapest verified nonstop detailed offe
   let calendarCalls = 0;
   let detailedCalls = 0;
   let calendarInput: Parameters<FlightCalendarProvider["getFlightCalendar"]>[0] | undefined;
+  const emitted: string[] = [];
   const itinerary = await discoverDirectItinerary(
     { origin: "ATH", destination: "SIN", earliestDeparture: "2026-09-20", adults: 2 },
     {
@@ -87,6 +88,7 @@ test("builds a direct itinerary from the cheapest verified nonstop detailed offe
           ];
         },
       },
+      onItineraryVerified: (value) => emitted.push(value.id),
     },
   );
 
@@ -105,6 +107,7 @@ test("builds a direct itinerary from the cheapest verified nonstop detailed offe
   assert.equal(itinerary?.totalFlightDurationMinutes, 620);
   assert.equal(itinerary?.totalStops, 0);
   assert.equal(itinerary?.score, DIRECT_BASELINE_SCORE);
+  assert.deepEqual(emitted, [itinerary?.id]);
 });
 
 test("omits a direct baseline safely when detailed results contain no nonstop flight", async () => {

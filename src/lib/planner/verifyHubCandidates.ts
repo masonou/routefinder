@@ -86,6 +86,7 @@ export interface VerifyHubCandidatesOptions {
   warn?: (message: string) => void;
   onDetailedOffers?: (trace: DetailedOfferTrace) => void;
   throwOnAllFailures?: boolean;
+  onVerifiedRoute?: (route: VerifiedHubRoute) => void;
 }
 
 export interface DetailedOfferTrace {
@@ -539,6 +540,7 @@ export async function verifyHubCandidates(
           };
         }
 
+        options.onVerifiedRoute?.(route);
         return {
           type: "success",
           route,

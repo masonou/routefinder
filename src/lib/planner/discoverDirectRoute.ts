@@ -37,6 +37,7 @@ export interface DirectRouteDiscoveryDependencies {
   flightOffersCache?: FlightOffersCache | null;
   warn?: WarningFunction;
   onTiming?: (timing: DirectRouteTiming) => void;
+  onItineraryVerified?: (itinerary: Itinerary) => void;
 }
 
 export interface DirectRouteTiming {
@@ -168,12 +169,14 @@ export async function discoverDirectItinerary(
       return undefined;
     }
 
-    return createItinerary({
+    const itinerary = createItinerary({
       origin,
       destination,
       legs: [{ flight: directOffer }],
       score: DIRECT_BASELINE_SCORE,
     });
+    dependencies.onItineraryVerified?.(itinerary);
+    return itinerary;
   } catch (error) {
     const message = error instanceof Error && error.message.trim()
       ? error.message

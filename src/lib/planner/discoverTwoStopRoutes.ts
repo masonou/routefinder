@@ -159,6 +159,7 @@ export interface DiscoverTwoStopRoutesDependencies {
   flightCalendarCache?: FlightCalendarCache | null;
   flightOffersCache?: FlightOffersCache | null;
   warn?: WarningFunction;
+  onItineraryVerified?: (itinerary: Itinerary) => void;
 }
 
 export interface TwoStopDiscoveryResult {
@@ -464,7 +465,16 @@ export async function discoverTwoStopRoutes(
         if (!finalLeg) continue;
         const price = totalPrice([firstLeg, middleLeg, finalLeg]);
         if (!price) { failures.push(`${h1.airportCode} → ${h2.airportCode}: leg currencies differ.`); continue; }
-        verified.push({ h1, h2, firstLeg, middleLeg, finalLeg, h1StayNights: middleDate.stayNights, h2StayNights: finalDate.stayNights, totalPrice: price, totalDuration: firstLeg.durationMinutes + middleLeg.durationMinutes + finalLeg.durationMinutes, scoreBreakdown: { price: 0, duration: 0, stops: 0, detour: 0, stay: 0, final: 0 }, score: 0 });
+        const route = { h1, h2, firstLeg, middleLeg, finalLeg, h1StayNights: middleDate.stayNights, h2StayNights: finalDate.stayNights, totalPrice: price, totalDuration: firstLeg.durationMinutes + middleLeg.durationMinutes + finalLeg.durationMinutes, scoreBreakdown: { price: 0, duration: 0, stops: 0, detour: 0, stay: 0, final: 0 }, score: 0 };
+        verified.push(route);
+        dependencies.onItineraryVerified?.(createItinerary({
+          origin, destination, score: route.score,
+          legs: [
+            { flight: route.firstLeg, stopoverAfter: { airportCode: route.h1.airportCode, city: route.h1.city, country: route.h1.country, nights: route.h1StayNights } },
+            { flight: route.middleLeg, stopoverAfter: { airportCode: route.h2.airportCode, city: route.h2.city, country: route.h2.country, nights: route.h2StayNights } },
+            { flight: route.finalLeg },
+          ],
+        }));
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown optional two-stop failure.";

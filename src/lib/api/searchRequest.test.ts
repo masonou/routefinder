@@ -110,10 +110,11 @@ test("debug timing reports a high-level cache hit with no provider work", async 
       },
     });
     assert.equal(result.status, 200);
-    if (!("timing" in result.body)) throw new Error("Expected debug timing metadata.");
-    assert.equal(result.body.timing.searchCacheHit, true);
-    assert.equal(result.body.timing.providerLiveRequests, 0);
-    assert.equal(result.body.timing.providerCacheHits, 0);
+    if (!("timing" in result.body) || !result.body.timing) throw new Error("Expected debug timing metadata.");
+    const timing = result.body.timing as import("../instrumentation/searchTiming.ts").SearchTiming;
+    assert.equal(timing.searchCacheHit, true);
+    assert.equal(timing.providerLiveRequests, 0);
+    assert.equal(timing.providerCacheHits, 0);
   } finally {
     if (prior === undefined) delete process.env.SEARCH_DEBUG_TIMINGS;
     else process.env.SEARCH_DEBUG_TIMINGS = prior;

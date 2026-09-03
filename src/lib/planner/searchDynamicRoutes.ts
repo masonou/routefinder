@@ -59,6 +59,7 @@ import { findAirportByCode } from "../../data/airports.ts";
 import { distanceKm } from "../utils/geography.ts";
 import type {
   DynamicSearchResult,
+  ItineraryProgressCategory,
   TwoStopDiscoveryMetadata,
 } from "../../types/search.ts";
 import {
@@ -85,6 +86,7 @@ export interface DynamicSearchDependencies {
 export interface DynamicSearchOptions {
   /** Explicitly bypasses only the full one-stop portfolio optimisation. */
   forceTwoStop?: boolean;
+  onItineraryVerified?: (itinerary: Itinerary, category: ItineraryProgressCategory) => void;
 }
 
 export interface ExploreDiscoveryResult {
@@ -179,7 +181,7 @@ export async function verifyCandidatesUntilFilled(
   initialVerifiedHubs: Set<string>,
   provider: FlightProvider,
   options: Pick<DynamicSearchDependencies, "flightOffersCache" | "warn"> &
-    Pick<VerifyHubCandidatesOptions, "onDetailedOffers">,
+    Pick<VerifyHubCandidatesOptions, "onDetailedOffers" | "onVerifiedRoute">,
 ): Promise<DetailedVerificationRun> {
   const verifiedRoutes: VerifiedHubRoute[] = [];
   const failures: DetailedVerificationFailure[] = [];
@@ -212,6 +214,7 @@ export async function verifyCandidatesUntilFilled(
         cache: options.flightOffersCache,
         warn: options.warn,
         onDetailedOffers: options.onDetailedOffers,
+        onVerifiedRoute: options.onVerifiedRoute,
         throwOnAllFailures: false,
       },
     );
@@ -340,7 +343,13 @@ export async function discoverFlexibleHubCandidates(
     candidates,
     calendarCandidates: selectCalendarCandidateVariants(candidates),
     failures,
-    timing: { exploreWallMs, ...exploreCounts, stage1ProcessingMs },
+    timing: {
+      exploreWallMs,
+      exploreRequests: exploreCounts.requests,
+      exploreLiveRequests: exploreCounts.liveRequests,
+      exploreCacheHits: exploreCounts.cacheHits,
+      stage1ProcessingMs,
+    },
   };
 }
 
@@ -359,8 +368,15 @@ export async function searchDynamicRoutePortfolio(
   options: DynamicSearchOptions = {},
   dependencies: DynamicSearchDependencies = {},
 ): Promise<DynamicSearchResult> {
+  const searchStartedAt = nowMs();
   const timing = emptyRequestTiming();
   timing.twoStopForced = options.forceTwoStop === true;
+  const emitItinerary = (itinerary: Itinerary, category: ItineraryProgressCategory) => {
+    if (timing.timeToFirstVerifiedItineraryMs === undefined) {
+      timing.timeToFirstVerifiedItineraryMs = elapsedMs(searchStartedAt);
+    }
+    options.onItineraryVerified?.(itinerary, category);
+  };
   const flightCalendarProvider =
     dependencies.flightCalendarProvider ?? searchApiFlightCalendarProvider;
   const flightProvider = dependencies.flightProvider ?? searchApiFlightProvider;
@@ -387,6 +403,7 @@ export async function searchDynamicRoutePortfolio(
       flightOffersCache: dependencies.flightOffersCache,
       warn,
       onTiming: (value) => { directTiming = value; },
+      onItineraryVerified: (itinerary) => emitItinerary(itinerary, "direct"),
     },
   );
   const discovery = await discoverFlexibleHubCandidates(
@@ -439,6 +456,7 @@ export async function searchDynamicRoutePortfolio(
       flightOffersCache: dependencies.flightOffersCache,
       warn,
       onDetailedOffers: (trace) => detailedTraces.push(trace),
+      onVerifiedRoute: (route) => emitItinerary(toDynamicItinerary(route), "one_stop"),
     },
   );
   timing.cleanDetailedWallMs = elapsedMs(cleanDetailedStartedAt);
@@ -475,6 +493,7 @@ export async function searchDynamicRoutePortfolio(
         flightOffersCache: dependencies.flightOffersCache,
         warn,
         onDetailedOffers: (trace) => detailedTraces.push(trace),
+        onVerifiedRoute: (route) => emitItinerary(toDynamicItinerary(route), "one_stop"),
       },
     )
     : {
@@ -558,6 +577,7 @@ export async function searchDynamicRoutePortfolio(
           flightCalendarCache: dependencies.flightCalendarCache,
           flightOffersCache: dependencies.flightOffersCache,
           warn,
+          onItineraryVerified: (itinerary) => emitItinerary(itinerary, "two_stop"),
         },
       );
       twoStopAdventures = result.itineraries;

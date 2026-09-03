@@ -7,6 +7,7 @@ export interface SearchTiming {
   searchCacheReadMs: number;
   searchCacheWriteMs: number;
   searchCacheHit: boolean;
+  timeToFirstVerifiedItineraryMs?: number;
   forcedTwoStopRequestTotalMs?: number;
   exploreWallMs: number;
   exploreRequests: number;

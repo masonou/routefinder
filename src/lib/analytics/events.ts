@@ -33,6 +33,23 @@ export function trackSearchSubmitted({ origin, destination }: SearchEventPropert
   capture("search_submitted", { origin, destination });
 }
 
+export function trackFirstResultRendered({
+  origin,
+  destination,
+  category,
+  timeToFirstResultMs,
+}: SearchEventProperties & {
+  category: "direct" | "one_stop" | "two_stop";
+  timeToFirstResultMs: number;
+}) {
+  capture("first_result_rendered", {
+    origin,
+    destination,
+    category,
+    time_to_first_result_ms: timeToFirstResultMs,
+  });
+}
+
 export function trackResultsFound({
   origin,
   destination,

@@ -20,17 +20,25 @@ import type { SearchCache } from "../cache/searchCache.ts";
 import type { Itinerary } from "../../types/itinerary.ts";
 import type { DynamicSearchResult } from "../../types/search.ts";
 import type { TripRequest } from "../../types/trip.ts";
+import type { SearchProgressEvent } from "../../types/search.ts";
 import { elapsedMs, emptyRequestTiming, nowMs, summarizeSearchTiming, type SearchTiming } from "../instrumentation/searchTiming.ts";
 
 type DynamicSearchFunction = (
   request: TripRequest,
-  options: { forceTwoStop: boolean },
+  options: {
+    forceTwoStop: boolean;
+    onItineraryVerified?: (itinerary: Itinerary, category: import("../../types/search.ts").ItineraryProgressCategory) => void;
+  },
 ) => Promise<DynamicSearchResult | Itinerary[]>;
 
 export interface SearchRequestDependencies {
   cache?: SearchCache | null;
   searchDynamicRoutes?: DynamicSearchFunction;
   createFailureReference?: (failureCode: SearchFailureCode) => string;
+}
+
+export interface SearchRequestProgressOptions {
+  onProgress?: (event: SearchProgressEvent) => void;
 }
 
 export type SearchRequestResult =
@@ -47,7 +55,8 @@ export type SearchRequestResult =
 
 export async function runSearchRequest(
   request: Request,
-  dependencies: SearchRequestDependencies = {}
+  dependencies: SearchRequestDependencies = {},
+  progress: SearchRequestProgressOptions = {},
 ): Promise<SearchRequestResult> {
   const searchStartedAt = nowMs();
   let body: unknown;
@@ -60,6 +69,7 @@ export async function runSearchRequest(
 
   try {
     const searchRequest = validateSearchApiBody(body);
+    progress.onProgress?.({ type: "search_started" });
     const tripRequest = toTripRequest(searchRequest);
     const cache = dependencies.cache === undefined ? getSearchCache() : dependencies.cache;
     const searchResult = await runCachedSearch({
@@ -68,7 +78,11 @@ export async function runSearchRequest(
       async load() {
         const result = await (dependencies.searchDynamicRoutes ?? searchDynamicRoutePortfolio)(
           tripRequest,
-          { forceTwoStop: searchRequest.forceTwoStop === true },
+          {
+            forceTwoStop: searchRequest.forceTwoStop === true,
+            onItineraryVerified: (itinerary, category) =>
+              progress.onProgress?.({ type: "itinerary_found", itinerary, category }),
+          },
         );
         // Retaining this narrow compatibility path keeps injected test and
         // integration planners written before the response metadata contract
@@ -105,6 +119,10 @@ export async function runSearchRequest(
     const responseBody = process.env.SEARCH_DEBUG_TIMINGS === "true"
       ? { ...publicResult, timing }
       : publicResult;
+    if (searchResult.cacheStatus === "HIT") {
+      progress.onProgress?.({ type: "search_snapshot", result: responseBody });
+    }
+    progress.onProgress?.({ type: "search_complete", result: responseBody });
 
     return {
       status: 200,
