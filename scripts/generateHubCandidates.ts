@@ -1,6 +1,7 @@
 import nextEnv from "@next/env";
 
 import { findAirportByCode } from "../src/data/airports.ts";
+import type { Itinerary } from "../src/types/itinerary.ts";
 import {
   buildDirectDestinationsCacheKey,
   getDirectDestinationsCache,
@@ -144,6 +145,34 @@ function bucketRows(candidates: DiagnosticCandidate[]) {
   });
 }
 
+function verifiedDetourMetrics(itineraries: Itinerary[], threshold: number): {
+  withinThreshold: number; aboveThreshold: number; maximum?: number; average?: number;
+} {
+  const detours = itineraries.flatMap((itinerary) => {
+    const codes = [
+      itinerary.legs[0]?.flight.origin,
+      ...itinerary.legs.map((leg) => leg.flight.destination),
+    ];
+    const airports = codes.map((code) => code ? findAirportByCode(code) : undefined);
+    if (airports.some((airport) => !airport) || airports.length < 2) return [];
+    const direct = distanceKm(airports[0]!, airports.at(-1)!);
+    if (direct <= 0) return [];
+    const via = airports.slice(1).reduce(
+      (total, airport, index) => total + distanceKm(airports[index]!, airport!),
+      0,
+    );
+    return [via / direct];
+  });
+  return {
+    withinThreshold: detours.filter((detour) => detour <= threshold).length,
+    aboveThreshold: detours.filter((detour) => detour > threshold).length,
+    ...(detours.length === 0 ? {} : {
+      maximum: Number(Math.max(...detours).toFixed(4)),
+      average: Number((detours.reduce((sum, detour) => sum + detour, 0) / detours.length).toFixed(4)),
+    }),
+  };
+}
+
 function printNonstopMismatch(
   candidate: import("../src/lib/planner/validateHubCandidates.ts").ValidatedHubCandidate,
   rejectionReason: string,
@@ -248,12 +277,21 @@ async function run(): Promise<void> {
   const cache = getDirectDestinationsCache();
   const exploreStartedAt = performance.now();
   const exploreByOrigin = (exploreOrigin: string) => Promise.all(dates.map(async (date) => {
-    const result = await runCachedDirectDestinations({
-      key: buildDirectDestinationsCacheKey({ origin: exploreOrigin, departureDate: date }),
-      cache,
-      load: () => searchApiDirectDestinationsProvider.getDirectDestinations({ origin: exploreOrigin, departureDate: date }),
-    });
-    return { date, ...result };
+    try {
+      const result = await runCachedDirectDestinations({
+        key: buildDirectDestinationsCacheKey({ origin: exploreOrigin, departureDate: date }),
+        cache,
+        load: () => searchApiDirectDestinationsProvider.getDirectDestinations({ origin: exploreOrigin, departureDate: date }),
+      });
+      return { date, ...result };
+    } catch (error) {
+      return {
+        date,
+        value: [] as DirectDestination[],
+        cacheStatus: "ERROR" as const,
+        error: error instanceof Error ? error.message : "Explore failed.",
+      };
+    }
   }));
   const [explore, reverseExplore] = await Promise.all([exploreByOrigin(origin), exploreByOrigin(destination)]);
   const exploreWallMs = performance.now() - exploreStartedAt;
@@ -263,32 +301,42 @@ async function run(): Promise<void> {
   const geography = raw.filter((candidate) => candidate.detourRatio <= MAX_HUB_DETOUR_RATIO).sort(compare);
   // Uses the production generator with the already-returned Explore payload: no extra live calls.
   const perDate = await Promise.all(explore.map((result) => generateHubCandidates(
-    { origin, destination, departureDate: result.date, reverseDestinationNetwork },
+    { origin, destination, departureDate: result.date, reverseDestinationNetwork, requireReverseNetworkMatch: true },
     { getDirectDestinations: async () => result.value },
   )));
   const stage1 = perDate.flat();
-  const version1Stage1 = (await Promise.all(explore.map((result) => generateHubCandidates(
+  const forwardStage1 = (await Promise.all(explore.map((result) => generateHubCandidates(
     { origin, destination, departureDate: result.date },
     { getDirectDestinations: async () => result.value },
   )))).flat();
+  // Local-only counterfactuals. They reuse the existing Explore payload and
+  // never issue Calendar/Detailed calls outside the Version 3 selection.
+  const version1Stage1 = geography;
+  const reverseGeographyStage1 = geography
+    .filter((candidate) => reverseDestinationNetwork.has(candidate.airportCode.trim().toUpperCase()))
+    .sort(compare);
   const preBudget = beforeCalendarBudget(stage1);
   const calendar = selectCalendarCandidateVariants(stage1);
   const version1Calendar = selectCalendarCandidateVariants(version1Stage1);
+  const reverseGeographyCalendar = selectCalendarCandidateVariants(reverseGeographyStage1);
   const stage1Keys = new Set(stage1.map(key));
   const preBudgetKeys = new Set(preBudget.map(key));
   const calendarKeys = new Set(calendar.map(key));
 
   console.log(`\n${"=".repeat(54)}\n${origin} → ${destination} · Stage 1 diagnostic\n${"=".repeat(54)}`);
-  console.log(`Rules: detour <= ${MAX_HUB_DETOUR_RATIO}; ${MAX_HUB_CANDIDATES} candidates per Explore date; ${MAX_DEPARTURE_VARIANTS_PER_HUB} variants per hub; top ${MAX_CALENDAR_CANDIDATES} to Calendar.`);
+  console.log(`Rules: strict Forward(A) ∩ Reverse(B); geography is diagnostic-only; ${MAX_HUB_CANDIDATES} candidates per Explore date; ${MAX_DEPARTURE_VARIANTS_PER_HUB} variants per hub; top ${MAX_CALENDAR_CANDIDATES} to Calendar.`);
   table("EXPLORE BY DATE", explore.map((result) => ({ exploreDate: result.date, directDestinations: result.value.length, cache: result.cacheStatus })));
-  console.log("\nREVERSE DESTINATION NETWORK");
+  console.log("\nREVERSE NETWORK COVERAGE");
   console.log(`Explore dates: ${dates.join(", ")}`);
+  const reverseSuccessfulDates = reverseExplore.filter((result) => result.cacheStatus !== "ERROR").length;
+  console.log(`successful Explore dates: ${reverseSuccessfulDates} / ${dates.length}; failed Explore dates: ${reverseExplore.length - reverseSuccessfulDates}.`);
   console.log(`raw destinations: ${reverseExplore.reduce((sum, result) => sum + result.value.length, 0)}; unique reverse airports: ${reverseDestinationNetwork.size}.`);
-  table("FORWARD / REVERSE OVERLAP", stage1.map((candidate) => ({
-    hub: candidate.airportCode, forward: "yes", reverse: candidate.reverseNetworkMatch ? "yes" : "no",
-    detour: candidate.detourRatio, stage1Score: candidate.candidateScore,
+  console.log(`\nFORWARD NETWORK\nunique hubs: ${uniqueHubs(forwardStage1)}\n\nREVERSE NETWORK\nunique hubs: ${reverseDestinationNetwork.size}\n\nSTRICT INTERSECTION\nunique hubs: ${uniqueHubs(stage1)}`);
+  table("FORWARD / REVERSE / STRICT INTERSECTION (DETOUR DIAGNOSTIC-ONLY)", forwardStage1.map((candidate) => ({
+    hub: candidate.airportCode, forward: "yes", reverse: reverseDestinationNetwork.has(candidate.airportCode.trim().toUpperCase()) ? "yes" : "no",
+    eligible: stage1.some((strict) => key(strict) === key(candidate)) ? "YES" : "NO",
+    detourDiagnosticOnly: candidate.detourRatio, forwardQuality: candidate.candidateScore,
   })));
-  console.log(`forward unique hubs: ${uniqueHubs(stage1)}; overlap: ${new Set(stage1.filter((candidate) => candidate.reverseNetworkMatch).map((candidate) => candidate.airportCode)).size}.`);
   console.log(`Explore aggregate: ${explore.reduce((sum, result) => sum + result.value.length, 0)} raw results; ${uniqueHubs(raw)} unique airports; ${new Set(raw.map(key)).size} unique airport/date variants.`);
   const source = findAirportByCode(origin);
   const target = findAirportByCode(destination);
@@ -329,8 +377,9 @@ async function run(): Promise<void> {
         : "not_selected_budget",
   })));
   console.log(`Calendar budget: ${MAX_CALENDAR_CANDIDATES}; eligible unique hubs before selection: ${uniqueHubs(preBudget)}; selected variants: ${calendar.length}; selected unique hubs: ${uniqueHubs(calendar)}.`);
-  console.log(`VERSION 1 CALENDAR SELECTION (local only): ${version1Calendar.map((candidate) => candidate.airportCode).join(", ")}`);
-  console.log(`REVERSE-AWARE CALENDAR SELECTION: ${calendar.map((candidate) => `${candidate.airportCode}${candidate.reverseNetworkMatch ? " *" : ""}`).join(", ")}`);
+  console.log(`BASELINE CURRENT CALENDAR SELECTION (local only): ${version1Calendar.map((candidate) => candidate.airportCode).join(", ")}`);
+  console.log(`REVERSE + GEOGRAPHY CALENDAR SELECTION (local only): ${reverseGeographyCalendar.map((candidate) => candidate.airportCode).join(", ")}`);
+  console.log(`NETWORK ONLY CALENDAR SELECTION (actual calls): ${calendar.map((candidate) => candidate.airportCode).join(", ")}`);
   console.log(`Before Calendar budget: ${uniqueHubs(preBudget)} unique hubs / ${preBudget.length} variants. After: ${uniqueHubs(calendar)} unique hubs / ${calendar.length} variants.`);
   const currentHubSet = new Set(geography.map((candidate) => candidate.airportCode));
   table("COUNTERFACTUAL GEOGRAPHY (LOCAL ONLY; NO CALENDAR CALLS)", [1.8, 2, 2.25].map((cutoff) => {
@@ -468,7 +517,7 @@ async function run(): Promise<void> {
         origin,
         destination,
         adults: 1,
-        h1Candidates: stage1,
+        h1Candidates: forwardStage1,
         observedConnections: observedConnectionsByH1(offerTraces),
         reverseDestinationNetwork,
         targetResults: twoStopTarget,
@@ -514,7 +563,12 @@ async function run(): Promise<void> {
   console.log("\nFINAL RETURNED RESULTS");
   console.log(`direct: not evaluated by hubs:debug\none-stop clean: ${oneStopPortfolio.clean.length}\none-stop connecting: ${oneStopPortfolio.connecting.length}\none-stop total: ${finalAdventures.length}\ntwo-stop: ${twoStop?.itineraries.length ?? 0}\ntotal itineraries returned: ${finalAdventures.length + (twoStop?.itineraries.length ?? 0)}`);
   console.log(`TWO-STOP DISCOVERY\neligible: ${shouldRunTwoStop ? "yes" : "no"}\nverified: ${twoStop?.itineraries.length ?? 0} / ${twoStopTarget} target`);
+  console.log("\nGEOGRAPHY DIAGNOSTICS (NOT USED FOR DISCOVERY)");
+  console.log("ONE STOP", verifiedDetourMetrics(finalAdventures, MAX_HUB_DETOUR_RATIO));
+  console.log("TWO STOP", verifiedDetourMetrics(twoStop?.itineraries ?? [], 2));
   const exploreHits = explore.filter((result) => result.cacheStatus === "HIT").length;
+  const reverseExploreHits = reverseExplore.filter((result) => result.cacheStatus === "HIT").length;
+  const reverseExploreLive = reverseExplore.filter((result) => result.cacheStatus === "MISS").length;
   const calendarLookups = [
     ...cleanValidation.calendarLookups,
     ...(fallbackValidation?.calendarLookups ?? []),
@@ -529,13 +583,14 @@ async function run(): Promise<void> {
   const detailedMisses = detailedLookups.filter((lookup) => lookup.cacheStatus === "MISS").length;
   console.log("\nAPI-CALL ACCOUNTING");
   console.log(`Explore wall: ${(exploreWallMs / 1_000).toFixed(2)}s; Clean Calendar wall: ${(cleanCalendarWallMs / 1_000).toFixed(2)}s; Clean Detailed wall: ${(cleanDetailedWallMs / 1_000).toFixed(2)}s.`);
-  console.log(`Live SearchAPI calls: Explore ${explore.length - exploreHits}; Calendar ${calendarMisses} (${calendarHits} cache hits; failures have no cache status); Detailed ${detailedMisses} (${detailedHits} cache hits); total ${explore.length - exploreHits + calendarMisses + detailedMisses}.`);
+  console.log(`Candidate slots: Calendar ${MAX_CALENDAR_CANDIDATES} available / ${calendar.length} used; strict-network variants ${preBudget.length}.`);
+  console.log(`Live SearchAPI calls: origin Explore ${explore.length - exploreHits}; reverse Explore ${reverseExploreLive} (${reverseExploreHits} cache hits); Calendar ${calendarMisses} (${calendarHits} cache hits; failures have no cache status); Detailed ${detailedMisses} (${detailedHits} cache hits); total ${explore.length - exploreHits + reverseExploreLive + calendarMisses + detailedMisses}.`);
   if (twoStop) {
     const twoStopLive = twoStop.api.h1ExploreCalls + twoStop.api.firstLegDetailedCalls +
       twoStop.api.middleCalendarCalls + twoStop.api.middleDetailedCalls +
       twoStop.api.finalCalendarCalls + twoStop.api.finalDetailedCalls;
     console.log(`Additional two-stop calls: Explore ${twoStop.api.h1ExploreCalls}; first-leg detailed ${twoStop.api.firstLegDetailedCalls}; H1→H2 Calendar ${twoStop.api.middleCalendarCalls}; H1→H2 detailed ${twoStop.api.middleDetailedCalls}; H2→destination Calendar ${twoStop.api.finalCalendarCalls}; H2→destination detailed ${twoStop.api.finalDetailedCalls}; cache hits ${twoStop.api.cacheHits}; total ${twoStopLive}.`);
-    console.log(`Total live calls: ${explore.length - exploreHits + calendarMisses + detailedMisses + twoStopLive}.`);
+    console.log(`Total live calls: ${explore.length - exploreHits + reverseExploreLive + calendarMisses + detailedMisses + twoStopLive}.`);
     console.log(`Two-stop wall: ${(twoStop.timing.twoStopExploreWallMs / 1_000).toFixed(2)}s Explore; ${(twoStop.timing.twoStopCalendarWallMs / 1_000).toFixed(2)}s Calendar; ${(twoStop.timing.twoStopDetailedWallMs / 1_000).toFixed(2)}s Detailed.`);
   }
   console.log(`Wall-clock diagnostic search: ${((performance.now() - searchStartedAt) / 1_000).toFixed(2)}s.`);

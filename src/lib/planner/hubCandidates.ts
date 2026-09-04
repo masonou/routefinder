@@ -35,6 +35,8 @@ export interface GenerateHubCandidatesInput {
   destination: string;
   departureDate: string;
   reverseDestinationNetwork?: ReadonlySet<string>;
+  /** Version 3 one-stop candidates require evidence from both Explore networks. */
+  requireReverseNetworkMatch?: boolean;
 }
 
 function normaliseAirportCode(code: string): string {
@@ -57,8 +59,8 @@ export interface HubCandidateScoreBreakdown {
   total: number;
 }
 
-// Exported for the diagnostic command. Candidate generation continues to use this
-// exact calculation, so diagnostics cannot drift from Stage 1 ranking.
+// Kept for the debug command's baseline/reverse+geography comparisons. Version
+// 3 candidate selection deliberately does not use this geography-first score.
 export function calculateHubCandidateScoreBreakdown(
   detourRatio: number,
   durationMinutes: number | undefined,
@@ -85,12 +87,39 @@ export function calculateHubCandidateScoreBreakdown(
   };
 }
 
+export interface NetworkHubCandidateScoreBreakdown {
+  duration: number;
+  price: number;
+  total: number;
+}
+
+/** Version 3 Stage 1 ranking: forward Explore quality only, never geography. */
+export function calculateNetworkHubCandidateScoreBreakdown(
+  durationMinutes: number | undefined,
+  price: number | undefined,
+): NetworkHubCandidateScoreBreakdown {
+  const durationScore =
+    durationMinutes === undefined
+      ? 0
+      : Math.max(0, 1 - Math.min(durationMinutes, 1_440) / 1_440) * 10;
+  const priceScore =
+    price === undefined
+      ? 0
+      : Math.max(0, 1 - Math.min(price, 1_000) / 1_000) * 10;
+  return {
+    duration: Number(durationScore.toFixed(3)),
+    price: Number(priceScore.toFixed(3)),
+    total: Number((durationScore + priceScore).toFixed(3)),
+  };
+}
+
 function toHubCandidate(
   directDestination: DirectDestination,
   originCoordinates: Coordinates,
   destinationCoordinates: Coordinates,
   directDistanceKm: number,
   reverseDestinationNetwork: ReadonlySet<string>,
+  requireReverseNetworkMatch: boolean,
 ): HubCandidate | null {
   const coordinates = {
     latitude: directDestination.latitude,
@@ -101,9 +130,13 @@ function toHubCandidate(
   const viaHubDistanceKm = originToHubDistanceKm + hubToDestinationDistanceKm;
   const detourRatio = viaHubDistanceKm / directDistanceKm;
 
-  if (!Number.isFinite(detourRatio) || detourRatio > MAX_HUB_DETOUR_RATIO) {
+  if (!Number.isFinite(detourRatio)) {
     return null;
   }
+  const reverseNetworkMatch = reverseDestinationNetwork.has(
+    normaliseAirportCode(directDestination.airportCode),
+  );
+  if (requireReverseNetworkMatch && !reverseNetworkMatch) return null;
 
   return {
     airportCode: directDestination.airportCode,
@@ -122,11 +155,8 @@ function toHubCandidate(
     ...(directDestination.flightDurationMinutes === undefined
       ? {}
       : { firstLegDurationMinutes: directDestination.flightDurationMinutes }),
-    reverseNetworkMatch: reverseDestinationNetwork.has(
-      normaliseAirportCode(directDestination.airportCode),
-    ),
-    candidateScore: calculateHubCandidateScoreBreakdown(
-      detourRatio,
+    reverseNetworkMatch,
+    candidateScore: calculateNetworkHubCandidateScoreBreakdown(
       directDestination.flightDurationMinutes,
       directDestination.indicativePrice,
     ).total,
@@ -135,9 +165,7 @@ function toHubCandidate(
 
 function compareHubCandidates(left: HubCandidate, right: HubCandidate): number {
   return (
-    Number(Boolean(right.reverseNetworkMatch)) - Number(Boolean(left.reverseNetworkMatch)) ||
     right.candidateScore - left.candidateScore ||
-    left.detourRatio - right.detourRatio ||
     (left.indicativeFirstLegPrice ?? Infinity) -
       (right.indicativeFirstLegPrice ?? Infinity) ||
     (left.firstLegDurationMinutes ?? Infinity) -
@@ -246,6 +274,7 @@ export async function generateHubCandidates(
     departureDate: input.departureDate,
   });
   const reverseDestinationNetwork = input.reverseDestinationNetwork ?? new Set<string>();
+  const requireReverseNetworkMatch = input.requireReverseNetworkMatch === true;
   const candidates = directDestinations
     .filter(
       (directDestination) =>
@@ -259,6 +288,7 @@ export async function generateHubCandidates(
         destinationCoordinates,
         directDistanceKm,
         reverseDestinationNetwork,
+        requireReverseNetworkMatch,
       ),
     )
     .filter((candidate): candidate is HubCandidate => candidate !== null)

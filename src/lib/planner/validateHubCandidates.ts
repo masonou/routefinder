@@ -209,15 +209,13 @@ function rankValidatedCandidates(
   const comparablePrices = candidates.map(
     (candidate) => candidate.estimatedTotalPrice ?? candidate.bestOnwardPrice,
   );
-  const detours = candidates.map((candidate) => candidate.detourRatio);
   const candidateScores = candidates.map((candidate) => candidate.candidateScore);
 
   return candidates
     .map((candidate) => {
       const comparablePrice =
         candidate.estimatedTotalPrice ?? candidate.bestOnwardPrice;
-      const priceScore = normalizedLowerIsBetter(comparablePrice, comparablePrices) * 60;
-      const detourScore = normalizedLowerIsBetter(candidate.detourRatio, detours) * 25;
+      const priceScore = normalizedLowerIsBetter(comparablePrice, comparablePrices) * 75;
       const stayScore =
         Math.max(
           0,
@@ -227,15 +225,15 @@ function rankValidatedCandidates(
               2,
         ) * 10;
       const firstLegScore =
-        normalizedHigherIsBetter(candidate.candidateScore, candidateScores) * 5;
+        normalizedHigherIsBetter(candidate.candidateScore, candidateScores) * 10;
 
-      // Validation ranking uses relative values among currently validated hubs:
-      // estimated total price 60%, detour 25%, target-stay fit 10%, and the
-      // original first-leg candidate quality 5%.
+      // Version 3 validation ranking remains pre-verification candidate work,
+      // so it deliberately excludes geography: estimated total price 75%,
+      // target-stay fit 15%, and forward Explore quality 10%.
       return {
         ...candidate,
         validationScore: Number(
-          (priceScore + detourScore + stayScore + firstLegScore).toFixed(3),
+          (priceScore + stayScore + firstLegScore).toFixed(3),
         ),
       };
     })
@@ -244,7 +242,7 @@ function rankValidatedCandidates(
         right.validationScore - left.validationScore ||
         (left.estimatedTotalPrice ?? left.bestOnwardPrice) -
           (right.estimatedTotalPrice ?? right.bestOnwardPrice) ||
-        left.detourRatio - right.detourRatio ||
+        right.candidateScore - left.candidateScore ||
         left.airportCode.localeCompare(right.airportCode),
     );
 }

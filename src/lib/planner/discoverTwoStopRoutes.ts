@@ -236,7 +236,11 @@ function selectCalendarDate(arrivalDate: string, calendar: FlightCalendarDay[]):
 function h1Selection(candidates: HubCandidate[]): HubCandidate[] {
   const selected = new Map<string, HubCandidate>();
   for (const candidate of [...candidates].sort((left, right) =>
-    right.candidateScore - left.candidateScore || left.airportCode.localeCompare(right.airportCode),
+    right.candidateScore - left.candidateScore ||
+    (left.indicativeFirstLegPrice ?? Infinity) - (right.indicativeFirstLegPrice ?? Infinity) ||
+    (left.firstLegDurationMinutes ?? Infinity) - (right.firstLegDurationMinutes ?? Infinity) ||
+    left.firstLegDepartureDate.localeCompare(right.firstLegDepartureDate) ||
+    left.airportCode.localeCompare(right.airportCode),
   )) {
     const code = candidate.airportCode.trim().toUpperCase();
     if (!selected.has(code)) selected.set(code, candidate);
@@ -246,21 +250,18 @@ function h1Selection(candidates: HubCandidate[]): HubCandidate[] {
 }
 
 function h2CandidateScore(input: {
-  detour: number; observed: boolean; price?: number; duration?: number;
+  observed: boolean; price?: number; duration?: number;
 }): number {
-  const geography = Math.max(0, (TWO_STOP_MAX_PATH_DETOUR_RATIO - input.detour) * 50);
   const observed = input.observed ? 12 : 0;
   const price = input.price === undefined ? 0 : Math.max(0, 1 - Math.min(input.price, 1_500) / 1_500) * 10;
   const duration = input.duration === undefined ? 0 : Math.max(0, 1 - Math.min(input.duration, 1_440) / 1_440) * 8;
-  return Number((geography + observed + price + duration).toFixed(3));
+  return Number((observed + price + duration).toFixed(3));
 }
 
 function h2EvidenceTier(candidate: Pick<TwoStopH2Candidate, "fromH1Explore" | "reverseNetworkMatch" | "observedConnection">): number {
-  if (candidate.fromH1Explore && candidate.reverseNetworkMatch && candidate.observedConnection) return 5;
-  if (candidate.fromH1Explore && candidate.reverseNetworkMatch) return 4;
-  if (candidate.observedConnection && candidate.reverseNetworkMatch) return 3;
-  if (candidate.observedConnection) return 2;
-  return candidate.fromH1Explore ? 1 : 0;
+  // Eligibility below already requires the two network edges. Observed airline
+  // connections only break ties within that strict intersection.
+  return candidate.observedConnection ? 1 : 0;
 }
 
 export function rankTwoStopH2Candidates(input: {
@@ -301,24 +302,30 @@ export function rankTwoStopH2Candidates(input: {
       distanceKm(originCoordinates, h1Coordinates) + distanceKm(h1Coordinates, h2Coordinates) +
       distanceKm(h2Coordinates, destinationCoordinates)
     ) / directDistance;
-    if (!Number.isFinite(detour) || detour > TWO_STOP_MAX_PATH_DETOUR_RATIO) return [];
+    if (!Number.isFinite(detour)) return [];
+    const reverseNetworkMatch = (input.reverseDestinationNetwork ?? new Set<string>()).has(choice.airportCode);
+    // Version 3's H2 graph is Forward(H1) ∩ Reverse(B). Observed connections
+    // remain diagnostic/tie-break evidence and cannot introduce a candidate.
+    if (!choice.fromH1Explore || !reverseNetworkMatch) return [];
     const source: TwoStopH2Candidate["source"] = choice.observed
       ? choice.explore ? "observed_connection+explore" : "observed_connection"
       : "explore";
     return [{
       airportCode: choice.airportCode, city: choice.city, country: choice.country, source,
       fromH1Explore: choice.fromH1Explore,
-      reverseNetworkMatch: (input.reverseDestinationNetwork ?? new Set<string>()).has(choice.airportCode),
+      reverseNetworkMatch,
       observedConnection: choice.observed,
       combinedPathDetourRatio: Number(detour.toFixed(4)),
       ...(choice.explore?.indicativePrice === undefined ? {} : { indicativePrice: choice.explore.indicativePrice }),
       ...(choice.explore?.currency ? { currency: choice.explore.currency } : {}),
       ...(choice.explore?.flightDurationMinutes === undefined ? {} : { indicativeDurationMinutes: choice.explore.flightDurationMinutes }),
-      candidateScore: h2CandidateScore({ detour, observed: choice.observed, price: choice.explore?.indicativePrice, duration: choice.explore?.flightDurationMinutes }),
+      candidateScore: h2CandidateScore({ observed: choice.observed, price: choice.explore?.indicativePrice, duration: choice.explore?.flightDurationMinutes }),
     }];
   }).sort((left, right) =>
     h2EvidenceTier(right) - h2EvidenceTier(left) ||
-    right.candidateScore - left.candidateScore || left.combinedPathDetourRatio - right.combinedPathDetourRatio ||
+    right.candidateScore - left.candidateScore ||
+    (left.indicativePrice ?? Infinity) - (right.indicativePrice ?? Infinity) ||
+    (left.indicativeDurationMinutes ?? Infinity) - (right.indicativeDurationMinutes ?? Infinity) ||
     left.airportCode.localeCompare(right.airportCode),
   ).slice(0, MAX_H2_PER_H1);
 }

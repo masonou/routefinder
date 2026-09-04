@@ -3,7 +3,7 @@ import test from "node:test";
 
 import {
   deduplicateHubCandidateVariants,
-  calculateHubCandidateScoreBreakdown,
+  calculateNetworkHubCandidateScoreBreakdown,
   generateHubCandidates,
   selectCalendarCandidateVariants,
 } from "./hubCandidates.ts";
@@ -40,83 +40,94 @@ function providerWith(
   return { getDirectDestinations: async () => destinations };
 }
 
-test("near-route hubs have lower detour ratios than backwards detours", async () => {
+test("strict one-stop candidates are the forward and reverse network intersection only", async () => {
   const candidates = await generateHubCandidates(
-    { origin: "LCA", destination: "DPS", departureDate: "2026-09-01" },
+    {
+      origin: "LCA", destination: "DPS", departureDate: "2026-09-01",
+      reverseDestinationNetwork: new Set(["SIN", "DXB", "IST"]),
+      requireReverseNetworkMatch: true,
+    },
     providerWith([
+      directDestination("BKK", 13.6811, 100.747002),
+      directDestination("SIN", 1.3644, 103.9915),
+      directDestination("HKG", 22.308, 113.9185),
       directDestination("DXB", 25.2532, 55.3657),
+    ]),
+  );
+
+  assert.deepEqual(candidates.map((candidate) => candidate.airportCode), ["DXB", "SIN"]);
+});
+
+test("strict network candidates are not rejected by the former geography cutoff", async () => {
+  const candidates = await generateHubCandidates(
+    {
+      origin: "LCA", destination: "DPS", departureDate: "2026-09-01",
+      reverseDestinationNetwork: new Set(["LHR"]),
+      requireReverseNetworkMatch: true,
+    },
+    providerWith([
       directDestination("LHR", 51.47, -0.46),
     ]),
   );
 
-  assert.equal(candidates.length, 1);
-  assert.equal(candidates[0]?.airportCode, "DXB");
-  assert.ok(candidates[0]?.detourRatio && candidates[0].detourRatio < 1.6);
+  assert.equal(candidates[0]?.airportCode, "LHR");
+  assert.ok((candidates[0]?.detourRatio ?? 0) > 1.6);
 });
 
-test("filters candidates above the configured detour threshold", async () => {
-  const candidates = await generateHubCandidates(
-    { origin: "LCA", destination: "DPS", departureDate: "2026-09-01" },
-    providerWith([
-      directDestination("DXB", 25.2532, 55.3657),
-      directDestination("LHR", 51.47, -0.46),
-    ]),
-  );
-
-  assert.deepEqual(candidates.map((candidate) => candidate.airportCode), ["DXB"]);
-});
-
-test("exposes the exact geography-first Stage 1 score components for diagnostics", () => {
-  assert.deepEqual(calculateHubCandidateScoreBreakdown(1.2, 720, 250), {
-    geography: 400,
+test("Version 3 Stage 1 score contains only non-geographic Explore quality", () => {
+  assert.deepEqual(calculateNetworkHubCandidateScoreBreakdown(720, 250), {
     duration: 5,
     price: 7.5,
-    total: 412.5,
+    total: 12.5,
   });
 });
 
-test("ranks lower-detour hubs above extreme detours and removes endpoints", async () => {
+test("better non-geographic forward quality outranks a lower-detour strict-network hub", async () => {
   const candidates = await generateHubCandidates(
-    { origin: "LCA", destination: "DPS", departureDate: "2026-09-01" },
+    {
+      origin: "LCA", destination: "DPS", departureDate: "2026-09-01",
+      reverseDestinationNetwork: new Set(["DXB", "NQZ"]),
+      requireReverseNetworkMatch: true,
+    },
     providerWith([
       directDestination("LCA", 34.8751, 33.6249),
       directDestination("DPS", -8.7484, 115.1671),
       directDestination("DXB", 25.2532, 55.3657, {
-        indicativePrice: 300,
-        flightDurationMinutes: 240,
+        indicativePrice: 900,
+        flightDurationMinutes: 900,
       }),
       directDestination("NQZ", 51.0222, 71.4669, {
         indicativePrice: 100,
         flightDurationMinutes: 330,
       }),
-      directDestination("LHR", 51.47, -0.46),
     ]),
   );
 
-  assert.deepEqual(candidates.map((candidate) => candidate.airportCode), ["DXB", "NQZ"]);
-  assert.ok((candidates[0]?.detourRatio ?? Infinity) < (candidates[1]?.detourRatio ?? 0));
+  assert.deepEqual(candidates.map((candidate) => candidate.airportCode), ["NQZ", "DXB"]);
+  assert.ok((candidates[0]?.detourRatio ?? 0) > (candidates[1]?.detourRatio ?? Infinity));
 });
 
-test("prioritizes reverse-network-supported hubs without bypassing geography", async () => {
+test("Calendar selection uses only available strict-network hubs instead of forward-only fillers", async () => {
   const candidates = await generateHubCandidates(
     {
       origin: "LCA",
       destination: "DPS",
       departureDate: "2026-09-01",
-      reverseDestinationNetwork: new Set(["NQZ", "LHR"]),
+      reverseDestinationNetwork: new Set(["NQZ", "LHR", "DXB"]),
+      requireReverseNetworkMatch: true,
     },
     providerWith([
       directDestination("DXB", 25.2532, 55.3657, { indicativePrice: 100, flightDurationMinutes: 240 }),
       directDestination("NQZ", 51.0222, 71.4669, { indicativePrice: 900, flightDurationMinutes: 900 }),
-      // LHR is reverse-supported but still fails the unchanged 1.6 detour rule.
       directDestination("LHR", 51.47, -0.46),
+      directDestination("BKK", 13.6811, 100.747002),
+      directDestination("HKG", 22.308, 113.9185),
     ]),
   );
 
-  assert.deepEqual(candidates.map((candidate) => candidate.airportCode), ["NQZ", "DXB"]);
-  assert.equal(candidates[0]?.reverseNetworkMatch, true);
-  assert.equal(candidates[1]?.reverseNetworkMatch, false);
-  assert.ok(candidates.every((candidate) => candidate.detourRatio <= 1.6));
+  const selected = selectCalendarCandidateVariants(candidates);
+  assert.equal(selected.length, 3);
+  assert.deepEqual(new Set(selected.map((candidate) => candidate.airportCode)), new Set(["DXB", "NQZ", "LHR"]));
 });
 
 function variant(

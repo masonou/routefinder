@@ -173,7 +173,7 @@ test("no viable Calendar dates rejects the candidate without representing it as 
   assert.deepEqual(result.failures, []);
 });
 
-test("limits Calendar lookups and ranks validated hubs using price, detour, and stay fit", async () => {
+test("limits Calendar lookups and ranks validated hubs using price, stay fit, and forward quality", async () => {
   const candidates = Array.from({ length: MAX_CALENDAR_CANDIDATES + 2 }, (_, index) =>
     candidate(`H${String(index).padStart(2, "0")}`, {
       detourRatio: index === 1 ? 1.0 : 1.2,

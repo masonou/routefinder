@@ -44,7 +44,7 @@ function isSearchCacheValue(value: unknown): value is SearchCacheValue {
 
 export function buildSearchCacheKey(input: SearchCacheKeyInput): string {
   return [
-    "routefinder:search:v17-reverse-explore",
+    "routefinder:search:v18-reverse-explore-no-geography",
     input.origin.trim().toUpperCase(),
     input.destination.trim().toUpperCase(),
     input.earliestDeparture,

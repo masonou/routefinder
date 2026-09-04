@@ -101,6 +101,9 @@ export interface ExploreDiscoveryResult {
 export interface FlexibleHubDiscoveryResult {
   departureDates: string[];
   exploreResults: ExploreDiscoveryResult[];
+  /** Forward(A), retained for the two-stop H1 network graph. */
+  forwardCandidates: HubCandidate[];
+  /** Strict Forward(A) ∩ Reverse(B) candidates for one-stop verification. */
   candidates: HubCandidate[];
   calendarCandidates: HubCandidate[];
   failures: { departureDate: string; message: string }[];
@@ -325,13 +328,24 @@ export async function discoverFlexibleHubCandidates(
     .filter((result) => result.error !== undefined)
     .map(({ departureDate, error }) => ({ departureDate, message: error as string }));
   const stage1StartedAt = nowMs();
-  const candidates = (await Promise.all(exploreResults.flatMap(async (result) => {
-    if (!result.value) return [];
-    return generateHubCandidates(
-      { origin: input.origin, destination: input.destination, departureDate: result.departureDate, reverseDestinationNetwork },
-      { getDirectDestinations: async () => result.value as import("../providers/types.ts").DirectDestination[] },
-    );
-  }))).flat();
+  const candidateSets = await Promise.all(exploreResults.filter(
+    (result): result is RawExploreResult & { value: import("../providers/types.ts").DirectDestination[] } => result.value !== undefined,
+  ).map(async (result) => {
+    const provider = { getDirectDestinations: async () => result.value as import("../providers/types.ts").DirectDestination[] };
+    const sharedInput = {
+      origin: input.origin,
+      destination: input.destination,
+      departureDate: result.departureDate,
+      reverseDestinationNetwork,
+    };
+    const [forward, strictIntersection] = await Promise.all([
+      generateHubCandidates(sharedInput, provider),
+      generateHubCandidates({ ...sharedInput, requireReverseNetworkMatch: true }, provider),
+    ]);
+    return { forward, strictIntersection };
+  }));
+  const forwardCandidates = candidateSets.flatMap((set) => set.forward);
+  const candidates = candidateSets.flatMap((set) => set.strictIntersection);
   const stage1ProcessingMs = elapsedMs(stage1StartedAt);
   const exploreCounts = countCacheStatuses(
     exploreResults.flatMap((result) => result.cacheStatus ? [{ cacheStatus: result.cacheStatus }] : []),
@@ -349,6 +363,7 @@ export async function discoverFlexibleHubCandidates(
       ...(result.cacheStatus === undefined ? {} : { cacheStatus: result.cacheStatus }),
       ...(result.error === undefined ? {} : { error: result.error }),
     })),
+    forwardCandidates,
     candidates,
     calendarCandidates: selectCalendarCandidateVariants(candidates),
     failures,
@@ -575,7 +590,7 @@ export async function searchDynamicRoutePortfolio(
           adults: request.adults ?? 1,
           // H1 is selected from the usable forward Explore pool, not only
           // from one-stop survivors. Its first leg is still detailed-verified.
-          h1Candidates: discovery.candidates,
+          h1Candidates: discovery.forwardCandidates,
           observedConnections: observedConnectionsByH1(detailedTraces),
           reverseDestinationNetwork: discovery.reverseDestinationNetwork,
           targetResults: forcePortfolioFull

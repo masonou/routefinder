@@ -631,7 +631,7 @@ test("overlapping flexible searches reuse cached Explore days independently", as
   );
 });
 
-test("reverse Explore failure degrades to forward-only candidate discovery", async () => {
+test("all Reverse Explore failures leave no strict network candidates while preserving direct eligibility", async () => {
   const discovery = await discoverFlexibleHubCandidates(
     { origin: "LCA", destination: "DPS", earliestDeparture: "2026-09-01" },
     {
@@ -648,8 +648,9 @@ test("reverse Explore failure degrades to forward-only candidate discovery", asy
 
   assert.equal(discovery.reverseDestinationNetwork.size, 0);
   assert.equal(discovery.reverseFailures.length, 4);
-  assert.ok(discovery.calendarCandidates.length > 0);
-  assert.ok(discovery.calendarCandidates.every((candidate) => !candidate.reverseNetworkMatch));
+  assert.ok(discovery.forwardCandidates.length > 0);
+  assert.equal(discovery.candidates.length, 0);
+  assert.equal(discovery.calendarCandidates.length, 0);
 });
 
 test("the flexible pipeline adds only the four bounded Reverse Explore calls", async () => {

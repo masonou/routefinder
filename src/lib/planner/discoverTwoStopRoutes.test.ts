@@ -48,22 +48,27 @@ test("two-stop eligibility is limited to long routes with portfolio space", () =
   );
 });
 
-test("H2 discovery combines observed connections with Explore and excludes endpoints", () => {
+test("H2 candidates require the strict Forward(H1) and Reverse(B) intersection", () => {
   const candidates = rankTwoStopH2Candidates({
     origin: "BNE", h1: bangkok, destination: "LCA",
-    observedConnections: [{ airportCode: "IST", city: "Istanbul", country: "Türkiye" }],
-    reverseDestinationNetwork: new Set(["IST"]),
+    observedConnections: [
+      { airportCode: "IST", city: "Istanbul", country: "Türkiye" },
+      { airportCode: "BOM", city: "Mumbai", country: "India" },
+    ],
+    reverseDestinationNetwork: new Set(["IST", "DXB", "SIN"]),
     exploreDestinations: [
       { airportCode: "IST", city: "Istanbul", country: "Türkiye", latitude: 41.2753, longitude: 28.7519, outboundDate: "2026-09-04", indicativePrice: 180, currency: "EUR", flightDurationMinutes: 600 },
+      { airportCode: "DXB", city: "Dubai", country: "United Arab Emirates", latitude: 25.2532, longitude: 55.3657, outboundDate: "2026-09-04", indicativePrice: 190, currency: "EUR", flightDurationMinutes: 420 },
+      { airportCode: "BOM", city: "Mumbai", country: "India", latitude: 19.0896, longitude: 72.8656, outboundDate: "2026-09-04", indicativePrice: 110, currency: "EUR", flightDurationMinutes: 330 },
+      { airportCode: "DEL", city: "Delhi", country: "India", latitude: 28.5562, longitude: 77.1, outboundDate: "2026-09-04" },
       { airportCode: "LCA", city: "Larnaca", country: "Cyprus", latitude: 34.8751, longitude: 33.6249, outboundDate: "2026-09-04" },
     ],
   });
-  assert.equal(candidates.length, 1);
-  assert.equal(candidates[0]?.airportCode, "IST");
+  assert.deepEqual(candidates.map((candidate) => candidate.airportCode), ["IST", "DXB"]);
   assert.equal(candidates[0]?.source, "observed_connection+explore");
   assert.equal(candidates[0]?.reverseNetworkMatch, true);
   assert.equal(candidates[0]?.observedConnection, true);
-  assert.ok((candidates[0]?.combinedPathDetourRatio ?? Infinity) <= 2);
+  assert.ok(candidates.every((candidate) => candidate.fromH1Explore && candidate.reverseNetworkMatch));
 
   const evidence = observedConnectionsByH1([{
     airportCode: "BKK", leg: "second", origin: "BKK", destination: "LCA", departureDate: "2026-09-05",
@@ -75,9 +80,23 @@ test("H2 discovery combines observed connections with Explore and excludes endpo
   assert.equal(evidence.get("BKK")?.[0]?.airportCode, "IST");
 });
 
+test("a strict-network H2 remains eligible above the former 2.0 detour cutoff", () => {
+  const candidates = rankTwoStopH2Candidates({
+    origin: "BNE", h1: bangkok, destination: "LCA",
+    observedConnections: [],
+    reverseDestinationNetwork: new Set(["JFK"]),
+    exploreDestinations: [
+      { airportCode: "JFK", city: "New York", country: "United States", latitude: 40.6413, longitude: -73.7781, outboundDate: "2026-09-04", indicativePrice: 400, currency: "EUR", flightDurationMinutes: 1_000 },
+    ],
+  });
+
+  assert.equal(candidates[0]?.airportCode, "JFK");
+  assert.ok((candidates[0]?.combinedPathDetourRatio ?? 0) > 2);
+});
+
 test("three verified nonstop legs produce retained generic two-stop itineraries up to the category target", async () => {
   const result = await discoverTwoStopRoutes(
-    { origin: "BNE", destination: "LCA", adults: 1, h1Candidates: [bangkok], observedConnections: new Map(), targetResults: 3 },
+    { origin: "BNE", destination: "LCA", adults: 1, h1Candidates: [bangkok], observedConnections: new Map(), reverseDestinationNetwork: new Set(["IST", "DOH", "KUL"]), targetResults: 3 },
     {
       directDestinationsCache: null, flightCalendarCache: null, flightOffersCache: null,
       directDestinationsProvider: { async getDirectDestinations() {
