@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { runSearchRequest } from "./searchRequest.ts";
+import { createSearchProgressStreamSink } from "./searchStream.ts";
 import type { SearchCache } from "../cache/searchCache.ts";
 import type { Itinerary } from "../../types/itinerary.ts";
 import type { TripRequest } from "../../types/trip.ts";
@@ -133,6 +134,38 @@ test("a cache miss invokes dynamic discovery", async () => {
 
   assert.equal(result.status, 200);
   assert.equal(searchCalls, 1);
+});
+
+test("client cancellation cannot turn a verified forced two-stop itinerary into a search failure", async () => {
+  const sink = createSearchProgressStreamSink({
+    get desiredSize() { return 1; },
+    enqueue() {},
+    close() {},
+  });
+  sink.cancel();
+  const itinerary = { id: "verified-after-cancel" } as Itinerary;
+  let plannerCompleted = false;
+
+  const result = await runSearchRequest(
+    searchRequest(searchInput({ forceTwoStop: true })),
+    {
+      cache: null,
+      async searchDynamicRoutes(_request, options) {
+        options.onItineraryVerified?.(itinerary, "two_stop");
+        plannerCompleted = true;
+        return {
+          count: 1,
+          itineraries: [itinerary],
+          twoStopDiscovery: { explored: true, canExplore: false, reason: "already_explored" },
+        };
+      },
+    },
+    { onProgress: sink.emit },
+  );
+
+  assert.equal(plannerCompleted, true);
+  assert.equal(result.status, 200);
+  assert.deepEqual(result.body.itineraries, [itinerary]);
 });
 
 test("forced two-stop requests are passed as a bounded planner option", async () => {
