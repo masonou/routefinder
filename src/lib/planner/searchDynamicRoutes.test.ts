@@ -308,7 +308,7 @@ test("dynamic orchestration maps verified routes into generic itineraries", asyn
 
   // The existing one-stop calls are retained, followed by a bounded optional
   // two-stop probe because this long route has an unfilled portfolio.
-  assert.ok(exploreCalls >= 4 && exploreCalls <= 6);
+  assert.ok(exploreCalls >= 8 && exploreCalls <= 10);
   assert.ok(calendarCalls >= 5 && calendarCalls <= 9);
   assert.ok(detailedCalls >= 5 && detailedCalls <= 9);
   assert.equal(itineraries.length, 3);
@@ -681,9 +681,10 @@ test("the flexible pipeline remains within the 4 Explore, 9 Calendar, and 7 deta
   });
 
   // One-stop retains its former 20-call envelope. The bounded optional branch
-  // can add at most two Explore, two first-leg detailed, and four pair checks
+  // can add four destination Reverse Explore calls, up to two H1 Explore
+  // calls, two first-leg detailed, and four pair checks
   // (Calendar + detailed for each remaining leg).
-  assert.ok(exploreCalls <= 6);
+  assert.ok(exploreCalls <= 10);
   assert.ok(calendarCalls <= 17);
   assert.ok(detailedCalls <= 17);
   assert.ok(exploreCalls + calendarCalls + detailedCalls <= 40);

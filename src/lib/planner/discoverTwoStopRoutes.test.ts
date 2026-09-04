@@ -5,8 +5,10 @@ import type { FlightOffer } from "../../types/flight.ts";
 import type { ValidatedHubCandidate } from "./validateHubCandidates.ts";
 import {
   discoverTwoStopRoutes,
+  buildRoundRobinPairSchedule,
   observedConnectionsByH1,
   rankTwoStopH2Candidates,
+  selectHybridTwoStopH1Candidates,
   shouldExploreTwoStopovers,
 } from "./discoverTwoStopRoutes.ts";
 
@@ -48,6 +50,85 @@ test("two-stop eligibility is limited to long routes with portfolio space", () =
   );
 });
 
+test("hybrid H1 selection keeps an independent gateway and a distinct proven one-stop", () => {
+  const forward = [
+    { ...bangkok, airportCode: "HKG", candidateScore: 300 },
+    { ...bangkok, airportCode: "BKK", candidateScore: 200 },
+    { ...bangkok, airportCode: "SIN", candidateScore: 100 },
+  ];
+  const h1s = selectHybridTwoStopH1Candidates({
+    forwardCandidates: forward,
+    provenCleanRoutes: [{ hub: forward[1]! }, { hub: forward[2]! }],
+  });
+  assert.deepEqual(h1s.map((candidate) => [candidate.airportCode, candidate.role]), [
+    ["HKG", "independent-primary"], ["BKK", "proven-one-stop"],
+  ]);
+});
+
+test("hybrid H1 selection falls back to two independent candidates when no one-stop is proven", () => {
+  const forward = [
+    { ...bangkok, airportCode: "DXB", candidateScore: 300 },
+    { ...bangkok, airportCode: "FCO", candidateScore: 200 },
+  ];
+  const h1s = selectHybridTwoStopH1Candidates({ forwardCandidates: forward, provenCleanRoutes: [] });
+  assert.deepEqual(h1s.map((candidate) => [candidate.airportCode, candidate.role]), [
+    ["DXB", "independent-primary"], ["FCO", "independent-secondary"],
+  ]);
+});
+
+test("pair attempts use round-robin allocation with spillover", () => {
+  const h1a = { ...bangkok, airportCode: "HKG", role: "independent-primary" as const };
+  const h1b = { ...bangkok, airportCode: "BKK", role: "proven-one-stop" as const };
+  const candidate = (airportCode: string) => ({
+    airportCode, city: airportCode, country: "Test", source: "explore" as const,
+    fromH1Explore: true, reverseNetworkMatch: false, observedConnection: false,
+    combinedPathDetourRatio: 1.2, candidateScore: 100,
+  });
+  assert.deepEqual(
+    buildRoundRobinPairSchedule([
+      { h1: h1a, candidates: [candidate("A1"), candidate("A2"), candidate("A3")] },
+      { h1: h1b, candidates: [candidate("B1"), candidate("B2"), candidate("B3")] },
+    ]).map((entry) => `${entry.h1.airportCode}:${entry.h2.airportCode}`),
+    ["HKG:A1", "BKK:B1", "HKG:A2", "BKK:B2"],
+  );
+  assert.deepEqual(
+    buildRoundRobinPairSchedule([
+      { h1: h1a, candidates: [candidate("A1"), candidate("A2"), candidate("A3")] },
+      { h1: h1b, candidates: [candidate("B1")] },
+    ]).map((entry) => `${entry.h1.airportCode}:${entry.h2.airportCode}`),
+    ["HKG:A1", "BKK:B1", "HKG:A2", "HKG:A3"],
+  );
+});
+
+test("dispatches both selected H1 Explore requests before either response is awaited", async () => {
+  const h1s = [
+    { ...bangkok, airportCode: "BKK", role: "independent-primary" as const },
+    { ...bangkok, airportCode: "HKG", role: "independent-secondary" as const },
+  ];
+  const explored: string[] = [];
+  let releaseExplores: (() => void) | undefined;
+  const bothExploresStarted = new Promise<void>((resolve) => {
+    releaseExplores = resolve;
+  });
+  const search = discoverTwoStopRoutes(
+    { origin: "BNE", destination: "LCA", adults: 1, h1Candidates: h1s, observedConnections: new Map(), targetResults: 3 },
+    {
+      directDestinationsCache: null, flightCalendarCache: null, flightOffersCache: null,
+      directDestinationsProvider: { async getDirectDestinations({ origin }) {
+        explored.push(origin);
+        if (explored.length === 2) releaseExplores?.();
+        await bothExploresStarted;
+        return [];
+      } },
+      flightCalendarProvider: { async getFlightCalendar() { return []; } },
+      flightProvider: { name: "test", async searchOneWay(input) { return [offer(input.origin, input.destination, input.departureWindow.start)]; } },
+    },
+  );
+  await bothExploresStarted;
+  assert.deepEqual(new Set(explored), new Set(["BKK", "HKG"]));
+  await search;
+});
+
 test("H2 discovery combines observed connections with Explore and excludes endpoints", () => {
   const candidates = rankTwoStopH2Candidates({
     origin: "BNE", h1: bangkok, destination: "LCA",
@@ -70,6 +151,16 @@ test("H2 discovery combines observed connections with Explore and excludes endpo
     ] }],
   }]);
   assert.equal(evidence.get("BKK")?.[0]?.airportCode, "IST");
+});
+
+test("H2 remains eligible without a reverse-network match but never beyond the geography limit", () => {
+  const candidates = rankTwoStopH2Candidates({
+    origin: "BNE", h1: bangkok, destination: "LCA", observedConnections: [],
+    reverseDestinationNetwork: new Set(),
+    exploreDestinations: [{ airportCode: "IST", city: "Istanbul", country: "Türkiye", latitude: 41.2753, longitude: 28.7519, outboundDate: "2026-09-04" }],
+  });
+  assert.equal(candidates[0]?.reverseNetworkMatch, false);
+  assert.equal(candidates[0]?.fromH1Explore, true);
 });
 
 test("three verified nonstop legs produce retained generic two-stop itineraries up to the category target", async () => {

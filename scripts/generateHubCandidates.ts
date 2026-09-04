@@ -29,6 +29,7 @@ import {
 import {
   discoverTwoStopRoutes,
   observedConnectionsByH1,
+  selectHybridTwoStopH1Candidates,
   shouldExploreTwoStopovers,
 } from "../src/lib/planner/discoverTwoStopRoutes.ts";
 import { partitionOneStopAdventures } from "../src/lib/planner/adventurePortfolio.ts";
@@ -441,17 +442,30 @@ async function run(): Promise<void> {
     console.log(`force-two-stop: ${forcePortfolioFull ? "enabled (portfolio_full bypass only)" : "ignored (route remains protected or automatic discovery already applies)"}`);
   }
   const twoStopTarget = forcePortfolioFull ? MAX_TWO_STOP_RESULTS : twoStopEligibility.targetResults;
+  const reverseExplore = shouldRunTwoStop
+    ? await Promise.all(dates.map(async (date) => {
+      const result = await runCachedDirectDestinations({
+        key: buildDirectDestinationsCacheKey({ origin: destination, departureDate: date }),
+        cache,
+        load: () => searchApiDirectDestinationsProvider.getDirectDestinations({ origin: destination, departureDate: date }),
+      });
+      return { date, ...result };
+    }))
+    : [];
+  const reverseNetwork = new Set(reverseExplore.flatMap((result) => result.value.map((entry) => entry.airportCode.trim().toUpperCase())));
   const twoStop = shouldRunTwoStop
     ? await discoverTwoStopRoutes(
       {
         origin,
         destination,
         adults: 1,
-        h1Candidates: [
-          ...cleanValidation.validatedCandidates,
-          ...(fallbackValidation?.validatedCandidates ?? []),
-        ],
+        h1Candidates: selectHybridTwoStopH1Candidates({
+          forwardCandidates: stage1,
+          provenCleanRoutes: rankVerifiedRoutes(allVerifiedRoutes).verifiedRoutes
+            .filter((route) => route.onwardPolicy === "nonstop"),
+        }),
         observedConnections: observedConnectionsByH1(offerTraces),
+        reverseDestinationNetwork: reverseNetwork,
         targetResults: twoStopTarget,
       },
       {
@@ -464,14 +478,19 @@ async function run(): Promise<void> {
   if (twoStop) {
     table("H1 CANDIDATES", twoStop.h1Candidates.map((candidate) => ({
       airport: candidate.airportCode, date: candidate.firstLegDepartureDate,
-      validationScore: candidate.validationScore,
+      role: candidate.role, source: candidate.role === "proven-one-stop" ? "verified-clean-one-stop" : "forward-stage1",
+      candidateScore: candidate.candidateScore,
     })));
     table("H2 CANDIDATES", twoStop.h2Candidates.flatMap(({ h1, candidates }) => candidates.map((candidate) => ({
       h1, airport: candidate.airportCode, source: candidate.source,
+      h1Explore: candidate.fromH1Explore, reverseMatch: candidate.reverseNetworkMatch, observedConnection: candidate.observedConnection,
       combinedDetour: candidate.combinedPathDetourRatio,
       indicativePrice: candidate.indicativePrice ?? "",
       candidateScore: candidate.candidateScore,
     }))));
+    table("PAIR ATTEMPT SCHEDULE", twoStop.pairAttemptSchedule.map((entry, index) => ({
+      attempt: index + 1, h1: entry.h1, h2: entry.h2,
+    })));
     table("PAIR VALIDATION", twoStop.itineraries.map((itinerary) => ({
       route: itinerary.legs.map((leg) => `${leg.flight.origin} → ${leg.flight.destination}`).join(" | "),
       h1Stay: itinerary.legs[0]?.stopoverAfter?.nights,
@@ -509,12 +528,13 @@ async function run(): Promise<void> {
   console.log(`Explore wall: ${(exploreWallMs / 1_000).toFixed(2)}s; Clean Calendar wall: ${(cleanCalendarWallMs / 1_000).toFixed(2)}s; Clean Detailed wall: ${(cleanDetailedWallMs / 1_000).toFixed(2)}s.`);
   console.log(`Live SearchAPI calls: Explore ${explore.length - exploreHits}; Calendar ${calendarMisses} (${calendarHits} cache hits; failures have no cache status); Detailed ${detailedMisses} (${detailedHits} cache hits); total ${explore.length - exploreHits + calendarMisses + detailedMisses}.`);
   if (twoStop) {
+    const reverseHits = reverseExplore.filter((result) => result.cacheStatus === "HIT").length;
     const twoStopLive = twoStop.api.h1ExploreCalls + twoStop.api.firstLegDetailedCalls +
       twoStop.api.middleCalendarCalls + twoStop.api.middleDetailedCalls +
       twoStop.api.finalCalendarCalls + twoStop.api.finalDetailedCalls;
-    console.log(`Additional two-stop calls: Explore ${twoStop.api.h1ExploreCalls}; first-leg detailed ${twoStop.api.firstLegDetailedCalls}; H1→H2 Calendar ${twoStop.api.middleCalendarCalls}; H1→H2 detailed ${twoStop.api.middleDetailedCalls}; H2→destination Calendar ${twoStop.api.finalCalendarCalls}; H2→destination detailed ${twoStop.api.finalDetailedCalls}; cache hits ${twoStop.api.cacheHits}; total ${twoStopLive}.`);
-    console.log(`Total live calls: ${explore.length - exploreHits + calendarMisses + detailedMisses + twoStopLive}.`);
-    console.log(`Two-stop wall: ${(twoStop.timing.twoStopExploreWallMs / 1_000).toFixed(2)}s Explore; ${(twoStop.timing.twoStopCalendarWallMs / 1_000).toFixed(2)}s Calendar; ${(twoStop.timing.twoStopDetailedWallMs / 1_000).toFixed(2)}s Detailed.`);
+    console.log(`Additional two-stop calls: Reverse Explore ${reverseExplore.length - reverseHits}; H1 Explore ${twoStop.api.h1ExploreCalls}; first-leg detailed ${twoStop.api.firstLegDetailedCalls}; H1→H2 Calendar ${twoStop.api.middleCalendarCalls}; H1→H2 detailed ${twoStop.api.middleDetailedCalls}; H2→destination Calendar ${twoStop.api.finalCalendarCalls}; H2→destination detailed ${twoStop.api.finalDetailedCalls}; cache hits ${twoStop.api.cacheHits + reverseHits}; total ${twoStopLive + reverseExplore.length - reverseHits}.`);
+    console.log(`Total live calls: ${explore.length - exploreHits + calendarMisses + detailedMisses + twoStopLive + reverseExplore.length - reverseHits}.`);
+    console.log(`Two-stop wall: ${(twoStop.timing.twoStopExploreWallMs / 1_000).toFixed(2)}s H1 Explore; ${(twoStop.timing.twoStopCalendarWallMs / 1_000).toFixed(2)}s Calendar; ${(twoStop.timing.twoStopDetailedWallMs / 1_000).toFixed(2)}s Detailed.`);
   }
   console.log(`Wall-clock diagnostic search: ${((performance.now() - searchStartedAt) / 1_000).toFixed(2)}s.`);
   console.log("Counterfactual cutoff and budget analysis above was local only: zero additional Calendar or Detailed calls.");

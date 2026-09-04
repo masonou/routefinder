@@ -53,6 +53,7 @@ import { partitionOneStopAdventures } from "./adventurePortfolio.ts";
 import {
   discoverTwoStopRoutes,
   observedConnectionsByH1,
+  selectHybridTwoStopH1Candidates,
   shouldExploreTwoStopovers,
 } from "./discoverTwoStopRoutes.ts";
 import { findAirportByCode } from "../../data/airports.ts";
@@ -353,6 +354,40 @@ export async function discoverFlexibleHubCandidates(
   };
 }
 
+async function discoverReverseDestinationNetwork(
+  input: Pick<TripRequest, "destination"> & { earliestDeparture: string },
+  dependencies: Pick<DynamicSearchDependencies, "directDestinationsProvider" | "directDestinationsCache" | "warn">,
+): Promise<{ network: Set<string>; failures: number; timing: Pick<RequestTiming, "twoStopReverseExploreWallMs" | "twoStopReverseExploreRequests" | "twoStopReverseExploreLiveRequests" | "twoStopReverseExploreCacheHits"> }> {
+  const provider = dependencies.directDestinationsProvider ?? searchApiDirectDestinationsProvider;
+  const cache = dependencies.directDestinationsCache === undefined ? getDirectDestinationsCache() : dependencies.directDestinationsCache;
+  const warn = dependencies.warn ?? console.warn;
+  const startedAt = nowMs();
+  const results = await Promise.all(getInitialDepartureDates(input.earliestDeparture).map(async (departureDate) => {
+    try {
+      return await runCachedDirectDestinations({
+        key: buildDirectDestinationsCacheKey({ origin: input.destination, departureDate }),
+        cache,
+        load: () => provider.getDirectDestinations({ origin: input.destination, departureDate }),
+        warn,
+      });
+    } catch (error) {
+      warn(`Reverse Explore failed for ${departureDate}: ${error instanceof Error ? error.message : "Unknown error."}`);
+      return undefined;
+    }
+  }));
+  const counts = countCacheStatuses(results.flatMap((result) => result ? [{ cacheStatus: result.cacheStatus }] : []));
+  return {
+    network: new Set(results.flatMap((result) => result?.value.map((entry) => entry.airportCode.trim().toUpperCase()) ?? [])),
+    failures: results.filter((result) => !result).length,
+    timing: {
+      twoStopReverseExploreWallMs: elapsedMs(startedAt),
+      twoStopReverseExploreRequests: counts.requests,
+      twoStopReverseExploreLiveRequests: counts.liveRequests,
+      twoStopReverseExploreCacheHits: counts.cacheHits,
+    },
+  };
+}
+
 function twoStopUnavailableForDistance(directDistanceKm: number): TwoStopDiscoveryMetadata {
   return directDistanceKm < TWO_STOP_MIN_DIRECT_DISTANCE_KM
     ? { explored: false, canExplore: false, reason: "route_too_short" }
@@ -553,10 +588,17 @@ export async function searchDynamicRoutePortfolio(
     // the one-stop verifier selects an offer. This lets connections inform H2
     // discovery while Explore remains an independent source.
     try {
-      const h1Candidates = [
-        ...cleanValidation.validatedCandidates,
-        ...(fallbackValidation?.validatedCandidates ?? []),
-      ];
+      const h1Candidates = selectHybridTwoStopH1Candidates({
+        forwardCandidates: discovery.candidates,
+        provenCleanRoutes: rankVerifiedRoutes(verifiedRoutes).verifiedRoutes
+          .filter((route) => route.onwardPolicy === "nonstop"),
+      });
+      const reverseNetwork = await discoverReverseDestinationNetwork(
+        { destination: request.destination, earliestDeparture: request.departureWindow.start },
+        dependencies,
+      );
+      Object.assign(timing, reverseNetwork.timing);
+      if (reverseNetwork.failures > 0) warn(`Reverse Explore coverage degraded: ${4 - reverseNetwork.failures}/4 dates succeeded.`);
       const result = await discoverTwoStopRoutes(
         {
           origin: request.origin,
@@ -564,6 +606,7 @@ export async function searchDynamicRoutePortfolio(
           adults: request.adults ?? 1,
           h1Candidates,
           observedConnections: observedConnectionsByH1(detailedTraces),
+          reverseDestinationNetwork: reverseNetwork.network,
           targetResults: forcePortfolioFull
             ? MAX_TWO_STOP_RESULTS
             : twoStopEligibility.targetResults,
@@ -636,8 +679,8 @@ function applyDirectTiming(timing: RequestTiming, direct: DirectRouteTiming | un
 }
 
 function refreshProviderCounts(timing: RequestTiming): RequestTiming {
-  timing.providerLiveRequests = timing.exploreLiveRequests + timing.cleanCalendarLiveRequests + timing.cleanDetailedLiveRequests + timing.fallbackCalendarLiveRequests + timing.fallbackDetailedLiveRequests + timing.directCalendarLiveRequests + timing.directDetailedLiveRequests + timing.twoStopExploreLiveRequests + timing.twoStopCalendarLiveRequests + timing.twoStopDetailedLiveRequests;
-  timing.providerCacheHits = timing.exploreCacheHits + timing.cleanCalendarCacheHits + timing.cleanDetailedCacheHits + timing.fallbackCalendarCacheHits + timing.fallbackDetailedCacheHits + timing.directCalendarCacheHits + timing.directDetailedCacheHits + timing.twoStopExploreCacheHits + timing.twoStopCalendarCacheHits + timing.twoStopDetailedCacheHits;
+  timing.providerLiveRequests = timing.exploreLiveRequests + timing.cleanCalendarLiveRequests + timing.cleanDetailedLiveRequests + timing.fallbackCalendarLiveRequests + timing.fallbackDetailedLiveRequests + timing.directCalendarLiveRequests + timing.directDetailedLiveRequests + timing.twoStopReverseExploreLiveRequests + timing.twoStopExploreLiveRequests + timing.twoStopCalendarLiveRequests + timing.twoStopDetailedLiveRequests;
+  timing.providerCacheHits = timing.exploreCacheHits + timing.cleanCalendarCacheHits + timing.cleanDetailedCacheHits + timing.fallbackCalendarCacheHits + timing.fallbackDetailedCacheHits + timing.directCalendarCacheHits + timing.directDetailedCacheHits + timing.twoStopReverseExploreCacheHits + timing.twoStopExploreCacheHits + timing.twoStopCalendarCacheHits + timing.twoStopDetailedCacheHits;
   return timing;
 }
 

@@ -46,7 +46,6 @@ import { isFlightWithinDepartureWindow, isReasonableFlight } from "./filters.ts"
 import type { HubCandidate } from "./hubCandidates.ts";
 import type { DetailedOfferTrace } from "./verifyHubCandidates.ts";
 import { elapsedMs, nowMs, type RequestTiming } from "../instrumentation/searchTiming.ts";
-import type { ValidatedHubCandidate } from "./validateHubCandidates.ts";
 
 type WarningFunction = (message: string) => void;
 
@@ -116,11 +115,19 @@ export interface TwoStopH2Candidate {
   city: string;
   country: string;
   source: "observed_connection" | "explore" | "observed_connection+explore";
+  fromH1Explore: boolean;
+  reverseNetworkMatch: boolean;
+  observedConnection: boolean;
   combinedPathDetourRatio: number;
   indicativePrice?: number;
   currency?: string;
   indicativeDurationMinutes?: number;
   candidateScore: number;
+}
+
+export type TwoStopH1Role = "independent-primary" | "independent-secondary" | "proven-one-stop";
+export interface TwoStopH1Candidate extends HubCandidate {
+  role?: TwoStopH1Role;
 }
 
 export interface TwoStopScoreBreakdown {
@@ -146,8 +153,9 @@ export interface DiscoverTwoStopRoutesInput {
   origin: string;
   destination: string;
   adults: number;
-  h1Candidates: ValidatedHubCandidate[];
+  h1Candidates: TwoStopH1Candidate[];
   observedConnections: Map<string, ObservedConnectionAirport[]>;
+  reverseDestinationNetwork?: ReadonlySet<string>;
   targetResults: number;
 }
 
@@ -169,8 +177,9 @@ export interface TwoStopDiscoveryResult {
     h2: string;
     score: TwoStopScoreBreakdown;
   }>;
-  h1Candidates: ValidatedHubCandidate[];
+  h1Candidates: TwoStopH1Candidate[];
   h2Candidates: Array<{ h1: string; candidates: TwoStopH2Candidate[] }>;
+  pairAttemptSchedule: Array<{ h1: string; h2: string }>;
   attemptedPairs: number;
   failures: string[];
   /** Number of H1 branches that ended in a provider/cache technical failure. */
@@ -180,7 +189,7 @@ export interface TwoStopDiscoveryResult {
 }
 
 interface VerifiedTwoStopRoute {
-  h1: ValidatedHubCandidate;
+  h1: TwoStopH1Candidate;
   h2: TwoStopH2Candidate;
   firstLeg: FlightOffer;
   middleLeg: FlightOffer;
@@ -230,11 +239,36 @@ function selectCalendarDate(arrivalDate: string, calendar: FlightCalendarDay[]):
     )[0];
 }
 
-function h1Selection(candidates: ValidatedHubCandidate[]): ValidatedHubCandidate[] {
-  const selected = new Map<string, ValidatedHubCandidate>();
-  for (const candidate of [...candidates].sort((left, right) =>
-    right.validationScore - left.validationScore || left.airportCode.localeCompare(right.airportCode),
-  )) {
+export function selectHybridTwoStopH1Candidates(input: {
+  forwardCandidates: HubCandidate[];
+  provenCleanRoutes: Array<{ hub: HubCandidate }>;
+}): TwoStopH1Candidate[] {
+  const independent = [...input.forwardCandidates].sort((left, right) =>
+    right.candidateScore - left.candidateScore || left.airportCode.localeCompare(right.airportCode),
+  );
+  const selected: TwoStopH1Candidate[] = [];
+  const add = (candidate: HubCandidate, role: TwoStopH1Role) => {
+    const code = candidate.airportCode.trim().toUpperCase();
+    if (selected.some((entry) => entry.airportCode.trim().toUpperCase() === code)) return false;
+    selected.push({ ...candidate, role });
+    return true;
+  };
+  const first = independent[0];
+  if (first) add(first, "independent-primary");
+  for (const route of input.provenCleanRoutes) {
+    if (selected.length >= MAX_TWO_STOP_H1_CANDIDATES) break;
+    add(route.hub, "proven-one-stop");
+  }
+  for (const candidate of independent) {
+    if (selected.length >= MAX_TWO_STOP_H1_CANDIDATES) break;
+    add(candidate, selected.length === 0 ? "independent-primary" : "independent-secondary");
+  }
+  return selected;
+}
+
+function h1Selection(candidates: TwoStopH1Candidate[]): TwoStopH1Candidate[] {
+  const selected = new Map<string, TwoStopH1Candidate>();
+  for (const candidate of candidates) {
     const code = candidate.airportCode.trim().toUpperCase();
     if (!selected.has(code)) selected.set(code, candidate);
     if (selected.size === MAX_TWO_STOP_H1_CANDIDATES) break;
@@ -252,9 +286,35 @@ function h2CandidateScore(input: {
   return Number((geography + observed + price + duration).toFixed(3));
 }
 
+function h2EvidenceTier(candidate: Pick<TwoStopH2Candidate, "fromH1Explore" | "reverseNetworkMatch" | "observedConnection">): number {
+  if (candidate.fromH1Explore && candidate.reverseNetworkMatch && candidate.observedConnection) return 4;
+  if (candidate.fromH1Explore && candidate.reverseNetworkMatch) return 3;
+  if (candidate.fromH1Explore && candidate.observedConnection) return 2;
+  return candidate.fromH1Explore ? 1 : 0;
+}
+
+export function buildRoundRobinPairSchedule(
+  entries: Array<{ h1: TwoStopH1Candidate; candidates: TwoStopH2Candidate[] }>,
+  maxAttempts = MAX_TWO_STOP_PAIR_ATTEMPTS,
+): Array<{ h1: TwoStopH1Candidate; h2: TwoStopH2Candidate }> {
+  const schedule: Array<{ h1: TwoStopH1Candidate; h2: TwoStopH2Candidate }> = [];
+  for (let index = 0; schedule.length < maxAttempts; index += 1) {
+    let added = false;
+    for (const entry of entries) {
+      const h2 = entry.candidates[index];
+      if (!h2 || schedule.length === maxAttempts) continue;
+      schedule.push({ h1: entry.h1, h2 });
+      added = true;
+    }
+    if (!added) break;
+  }
+  return schedule;
+}
+
 export function rankTwoStopH2Candidates(input: {
   origin: string; h1: HubCandidate; destination: string;
   observedConnections: ObservedConnectionAirport[]; exploreDestinations: DirectDestination[];
+  reverseDestinationNetwork?: ReadonlySet<string>;
 }): TwoStopH2Candidate[] {
   const origin = input.origin.trim().toUpperCase();
   const h1 = input.h1.airportCode.trim().toUpperCase();
@@ -266,11 +326,11 @@ export function rankTwoStopH2Candidates(input: {
   const directDistance = distanceKm(originCoordinates, destinationCoordinates);
   if (directDistance <= 0) return [];
   const choices = new Map<string, {
-    airportCode: string; city: string; country: string; observed: boolean;
+    airportCode: string; city: string; country: string; observed: boolean; fromH1Explore: boolean;
     explore?: DirectDestination;
   }>();
   for (const observed of input.observedConnections) {
-    choices.set(observed.airportCode, { ...observed, observed: true });
+    choices.set(observed.airportCode, { ...observed, observed: true, fromH1Explore: false });
   }
   for (const explore of input.exploreDestinations) {
     const code = explore.airportCode.trim().toUpperCase();
@@ -278,6 +338,7 @@ export function rankTwoStopH2Candidates(input: {
     choices.set(code, {
       airportCode: code, city: explore.city, country: explore.country,
       observed: existing?.observed ?? false, explore,
+      fromH1Explore: true,
     });
   }
   return [...choices.values()].flatMap((choice) => {
@@ -294,6 +355,9 @@ export function rankTwoStopH2Candidates(input: {
       : "explore";
     return [{
       airportCode: choice.airportCode, city: choice.city, country: choice.country, source,
+      fromH1Explore: choice.fromH1Explore,
+      reverseNetworkMatch: (input.reverseDestinationNetwork ?? new Set<string>()).has(choice.airportCode),
+      observedConnection: choice.observed,
       combinedPathDetourRatio: Number(detour.toFixed(4)),
       ...(choice.explore?.indicativePrice === undefined ? {} : { indicativePrice: choice.explore.indicativePrice }),
       ...(choice.explore?.currency ? { currency: choice.explore.currency } : {}),
@@ -301,6 +365,7 @@ export function rankTwoStopH2Candidates(input: {
       candidateScore: h2CandidateScore({ detour, observed: choice.observed, price: choice.explore?.indicativePrice, duration: choice.explore?.flightDurationMinutes }),
     }];
   }).sort((left, right) =>
+    h2EvidenceTier(right) - h2EvidenceTier(left) ||
     right.candidateScore - left.candidateScore || left.combinedPathDetourRatio - right.combinedPathDetourRatio ||
     left.airportCode.localeCompare(right.airportCode),
   ).slice(0, MAX_H2_PER_H1);
@@ -383,104 +448,118 @@ export async function discoverTwoStopRoutes(
   const origin = input.origin.trim().toUpperCase();
   const destination = input.destination.trim().toUpperCase();
 
-  for (const h1 of h1Candidates) {
-    if (verified.length >= input.targetResults || attemptedPairs >= MAX_TWO_STOP_PAIR_ATTEMPTS) break;
+  type PreparedH1 = { h1: TwoStopH1Candidate; firstLeg: FlightOffer; h1ArrivalDate: string; candidates: TwoStopH2Candidate[] };
+  const failedH1 = new Set<string>();
+  const recordH1Failure = (h1: TwoStopH1Candidate, error: unknown) => {
+    const message = error instanceof Error ? error.message : "Unknown optional two-stop failure.";
+    warn(`Two-stop discovery failed for ${h1.airportCode}: ${message}`);
+    failures.push(`${h1.airportCode}: ${message}`);
+    if (!failedH1.has(h1.airportCode)) {
+      failedH1.add(h1.airportCode);
+      technicalFailureCount += 1;
+    }
+  };
+  const firstLegStartedAt = nowMs();
+  const firstLegOutcomes = await Promise.all(h1Candidates.map(async (h1) => {
     try {
-      const firstDetailedStartedAt = nowMs();
-      const firstResult = await runCachedFlightOffers({
-        key: buildFlightOffersCacheKey({ origin, destination: h1.airportCode, departureDate: h1.firstLegDepartureDate, adults: input.adults }),
-        cache: flightOffersCache,
-        load: () => dependencies.flightProvider.searchOneWay({ origin, destination: h1.airportCode, departureWindow: { start: h1.firstLegDepartureDate, end: h1.firstLegDepartureDate }, adults: input.adults }),
-        warn,
+      const result = await runCachedFlightOffers({
+        key: buildFlightOffersCacheKey({ origin, destination: h1.airportCode, departureDate: h1.firstLegDepartureDate, adults: input.adults }), cache: flightOffersCache,
+        load: () => dependencies.flightProvider.searchOneWay({ origin, destination: h1.airportCode, departureWindow: { start: h1.firstLegDepartureDate, end: h1.firstLegDepartureDate }, adults: input.adults }), warn,
       });
-      twoStopDetailedWallMs += elapsedMs(firstDetailedStartedAt);
-      recordStageCache("detailed", firstResult.cacheStatus, "firstLegDetailedCalls");
-      const firstLeg = selectNonstopOffer(firstResult.value, origin, h1.airportCode, h1.firstLegDepartureDate);
-      const h1ArrivalDate = firstLeg ? localDate(firstLeg.arrivalAt) : undefined;
-      if (!firstLeg || !h1ArrivalDate) {
-        failures.push(`${h1.airportCode}: no usable nonstop first leg.`);
-        continue;
-      }
-      const exploreDate = addCalendarDays(h1ArrivalDate, TARGET_TWO_STOP_STAY_NIGHTS);
-      const exploreStartedAt = nowMs();
-      const exploreResult = await runCachedDirectDestinations({
-        key: buildDirectDestinationsCacheKey({ origin: h1.airportCode, departureDate: exploreDate }),
-        cache: directDestinationsCache,
-        load: () => dependencies.directDestinationsProvider.getDirectDestinations({ origin: h1.airportCode, departureDate: exploreDate }),
-        warn,
+      return { h1, result };
+    } catch (error) { return { h1, error }; }
+  }));
+  twoStopDetailedWallMs += elapsedMs(firstLegStartedAt);
+  const firstLegReady: Array<{ h1: TwoStopH1Candidate; firstLeg: FlightOffer; h1ArrivalDate: string }> = [];
+  for (const outcome of firstLegOutcomes) {
+    if ("error" in outcome) { recordH1Failure(outcome.h1, outcome.error); continue; }
+    recordStageCache("detailed", outcome.result.cacheStatus, "firstLegDetailedCalls");
+    const firstLeg = selectNonstopOffer(outcome.result.value, origin, outcome.h1.airportCode, outcome.h1.firstLegDepartureDate);
+    const h1ArrivalDate = firstLeg ? localDate(firstLeg.arrivalAt) : undefined;
+    if (!firstLeg || !h1ArrivalDate) { failures.push(`${outcome.h1.airportCode}: no usable nonstop first leg.`); continue; }
+    firstLegReady.push({ h1: outcome.h1, firstLeg, h1ArrivalDate });
+  }
+  const h1ExploreStartedAt = nowMs();
+  const exploreOutcomes = await Promise.all(firstLegReady.map(async (entry) => {
+    try {
+      const exploreDate = addCalendarDays(entry.h1ArrivalDate, TARGET_TWO_STOP_STAY_NIGHTS);
+      const result = await runCachedDirectDestinations({
+        key: buildDirectDestinationsCacheKey({ origin: entry.h1.airportCode, departureDate: exploreDate }), cache: directDestinationsCache,
+        load: () => dependencies.directDestinationsProvider.getDirectDestinations({ origin: entry.h1.airportCode, departureDate: exploreDate }), warn,
       });
-      twoStopExploreWallMs += elapsedMs(exploreStartedAt);
-      recordStageCache("explore", exploreResult.cacheStatus, "h1ExploreCalls");
-      const pairProcessingStartedAt = nowMs();
-      const rankedH2 = rankTwoStopH2Candidates({
-        origin, h1, destination, exploreDestinations: exploreResult.value,
-        observedConnections: input.observedConnections.get(h1.airportCode.trim().toUpperCase()) ?? [],
+      return { ...entry, result };
+    } catch (error) { return { ...entry, error }; }
+  }));
+  twoStopExploreWallMs += elapsedMs(h1ExploreStartedAt);
+  const preparedH1: PreparedH1[] = [];
+  for (const outcome of exploreOutcomes) {
+    if ("error" in outcome) { recordH1Failure(outcome.h1, outcome.error); continue; }
+    recordStageCache("explore", outcome.result.cacheStatus, "h1ExploreCalls");
+    const pairProcessingStartedAt = nowMs();
+    const candidates = rankTwoStopH2Candidates({ origin, h1: outcome.h1, destination, exploreDestinations: outcome.result.value, reverseDestinationNetwork: input.reverseDestinationNetwork, observedConnections: input.observedConnections.get(outcome.h1.airportCode.trim().toUpperCase()) ?? [] });
+    twoStopPairCandidateProcessingMs += elapsedMs(pairProcessingStartedAt);
+    h2Candidates.push({ h1: outcome.h1.airportCode, candidates });
+    preparedH1.push({ h1: outcome.h1, firstLeg: outcome.firstLeg, h1ArrivalDate: outcome.h1ArrivalDate, candidates });
+  }
+  const preparedByH1 = new Map(preparedH1.map((entry) => [entry.h1.airportCode, entry]));
+  const pairSchedule = buildRoundRobinPairSchedule(preparedH1.map((entry) => ({ h1: entry.h1, candidates: entry.candidates })));
+  const initialH1Attempts = new Set(pairSchedule.map((entry) => entry.h1.airportCode)).size;
+  for (const { h1, h2 } of pairSchedule) {
+    if (verified.length >= input.targetResults && attemptedPairs >= initialH1Attempts) break;
+    const prepared = preparedByH1.get(h1.airportCode);
+    if (!prepared) continue;
+    attemptedPairs += 1;
+    try {
+      const middleCalendarStartedAt = nowMs();
+      const middleCalendar = await runCachedFlightCalendar({
+        key: buildFlightCalendarCacheKey({ origin: h1.airportCode, destination: h2.airportCode, startDate: addCalendarDays(prepared.h1ArrivalDate, MIN_TWO_STOP_STAY_NIGHTS), endDate: addCalendarDays(prepared.h1ArrivalDate, MAX_TWO_STOP_STAY_NIGHTS), stopPolicy: "nonstop" }), cache: flightCalendarCache,
+        load: () => dependencies.flightCalendarProvider.getFlightCalendar({ origin: h1.airportCode, destination: h2.airportCode, departureWindow: { start: addCalendarDays(prepared.h1ArrivalDate, MIN_TWO_STOP_STAY_NIGHTS), end: addCalendarDays(prepared.h1ArrivalDate, MAX_TWO_STOP_STAY_NIGHTS) }, stopPolicy: "nonstop" }), warn,
       });
-      twoStopPairCandidateProcessingMs += elapsedMs(pairProcessingStartedAt);
-      h2Candidates.push({ h1: h1.airportCode, candidates: rankedH2 });
-      for (const h2 of rankedH2) {
-        if (verified.length >= input.targetResults || attemptedPairs >= MAX_TWO_STOP_PAIR_ATTEMPTS) break;
-        attemptedPairs += 1;
-        const middleCalendarStartedAt = nowMs();
-        const middleCalendar = await runCachedFlightCalendar({
-          key: buildFlightCalendarCacheKey({ origin: h1.airportCode, destination: h2.airportCode, startDate: addCalendarDays(h1ArrivalDate, MIN_TWO_STOP_STAY_NIGHTS), endDate: addCalendarDays(h1ArrivalDate, MAX_TWO_STOP_STAY_NIGHTS), stopPolicy: "nonstop" }),
-          cache: flightCalendarCache,
-          load: () => dependencies.flightCalendarProvider.getFlightCalendar({ origin: h1.airportCode, destination: h2.airportCode, departureWindow: { start: addCalendarDays(h1ArrivalDate, MIN_TWO_STOP_STAY_NIGHTS), end: addCalendarDays(h1ArrivalDate, MAX_TWO_STOP_STAY_NIGHTS) }, stopPolicy: "nonstop" }),
-          warn,
-        });
-        twoStopCalendarWallMs += elapsedMs(middleCalendarStartedAt);
-        recordStageCache("calendar", middleCalendar.cacheStatus, "middleCalendarCalls");
-        const middleDate = selectCalendarDate(h1ArrivalDate, middleCalendar.value);
-        if (!middleDate) continue;
-        const middleDetailedStartedAt = nowMs();
-        const middleResult = await runCachedFlightOffers({
-          key: buildFlightOffersCacheKey({ origin: h1.airportCode, destination: h2.airportCode, departureDate: middleDate.departureDate, adults: input.adults }),
-          cache: flightOffersCache,
-          load: () => dependencies.flightProvider.searchOneWay({ origin: h1.airportCode, destination: h2.airportCode, departureWindow: { start: middleDate.departureDate, end: middleDate.departureDate }, adults: input.adults }), warn,
-        });
-        twoStopDetailedWallMs += elapsedMs(middleDetailedStartedAt);
-        recordStageCache("detailed", middleResult.cacheStatus, "middleDetailedCalls");
-        const middleLeg = selectNonstopOffer(middleResult.value, h1.airportCode, h2.airportCode, middleDate.departureDate);
-        const h2ArrivalDate = middleLeg ? localDate(middleLeg.arrivalAt) : undefined;
-        if (!middleLeg || !h2ArrivalDate) continue;
-        const finalCalendarStartedAt = nowMs();
-        const finalCalendar = await runCachedFlightCalendar({
-          key: buildFlightCalendarCacheKey({ origin: h2.airportCode, destination, startDate: addCalendarDays(h2ArrivalDate, MIN_TWO_STOP_STAY_NIGHTS), endDate: addCalendarDays(h2ArrivalDate, MAX_TWO_STOP_STAY_NIGHTS), stopPolicy: "nonstop" }),
-          cache: flightCalendarCache,
-          load: () => dependencies.flightCalendarProvider.getFlightCalendar({ origin: h2.airportCode, destination, departureWindow: { start: addCalendarDays(h2ArrivalDate, MIN_TWO_STOP_STAY_NIGHTS), end: addCalendarDays(h2ArrivalDate, MAX_TWO_STOP_STAY_NIGHTS) }, stopPolicy: "nonstop" }), warn,
-        });
-        twoStopCalendarWallMs += elapsedMs(finalCalendarStartedAt);
-        recordStageCache("calendar", finalCalendar.cacheStatus, "finalCalendarCalls");
-        const finalDate = selectCalendarDate(h2ArrivalDate, finalCalendar.value);
-        if (!finalDate) continue;
-        const finalDetailedStartedAt = nowMs();
-        const finalResult = await runCachedFlightOffers({
-          key: buildFlightOffersCacheKey({ origin: h2.airportCode, destination, departureDate: finalDate.departureDate, adults: input.adults }),
-          cache: flightOffersCache,
-          load: () => dependencies.flightProvider.searchOneWay({ origin: h2.airportCode, destination, departureWindow: { start: finalDate.departureDate, end: finalDate.departureDate }, adults: input.adults }), warn,
-        });
-        twoStopDetailedWallMs += elapsedMs(finalDetailedStartedAt);
-        recordStageCache("detailed", finalResult.cacheStatus, "finalDetailedCalls");
-        const finalLeg = selectNonstopOffer(finalResult.value, h2.airportCode, destination, finalDate.departureDate);
-        if (!finalLeg) continue;
-        const price = totalPrice([firstLeg, middleLeg, finalLeg]);
-        if (!price) { failures.push(`${h1.airportCode} → ${h2.airportCode}: leg currencies differ.`); continue; }
-        const route = { h1, h2, firstLeg, middleLeg, finalLeg, h1StayNights: middleDate.stayNights, h2StayNights: finalDate.stayNights, totalPrice: price, totalDuration: firstLeg.durationMinutes + middleLeg.durationMinutes + finalLeg.durationMinutes, scoreBreakdown: { price: 0, duration: 0, stops: 0, detour: 0, stay: 0, final: 0 }, score: 0 };
-        verified.push(route);
-        dependencies.onItineraryVerified?.(createItinerary({
-          origin, destination, score: route.score,
-          legs: [
-            { flight: route.firstLeg, stopoverAfter: { airportCode: route.h1.airportCode, city: route.h1.city, country: route.h1.country, nights: route.h1StayNights } },
-            { flight: route.middleLeg, stopoverAfter: { airportCode: route.h2.airportCode, city: route.h2.city, country: route.h2.country, nights: route.h2StayNights } },
-            { flight: route.finalLeg },
-          ],
-        }));
-      }
+      twoStopCalendarWallMs += elapsedMs(middleCalendarStartedAt);
+      recordStageCache("calendar", middleCalendar.cacheStatus, "middleCalendarCalls");
+      const middleDate = selectCalendarDate(prepared.h1ArrivalDate, middleCalendar.value);
+      if (!middleDate) continue;
+      const middleDetailedStartedAt = nowMs();
+      const middleResult = await runCachedFlightOffers({
+        key: buildFlightOffersCacheKey({ origin: h1.airportCode, destination: h2.airportCode, departureDate: middleDate.departureDate, adults: input.adults }), cache: flightOffersCache,
+        load: () => dependencies.flightProvider.searchOneWay({ origin: h1.airportCode, destination: h2.airportCode, departureWindow: { start: middleDate.departureDate, end: middleDate.departureDate }, adults: input.adults }), warn,
+      });
+      twoStopDetailedWallMs += elapsedMs(middleDetailedStartedAt);
+      recordStageCache("detailed", middleResult.cacheStatus, "middleDetailedCalls");
+      const middleLeg = selectNonstopOffer(middleResult.value, h1.airportCode, h2.airportCode, middleDate.departureDate);
+      const h2ArrivalDate = middleLeg ? localDate(middleLeg.arrivalAt) : undefined;
+      if (!middleLeg || !h2ArrivalDate) continue;
+      const finalCalendarStartedAt = nowMs();
+      const finalCalendar = await runCachedFlightCalendar({
+        key: buildFlightCalendarCacheKey({ origin: h2.airportCode, destination, startDate: addCalendarDays(h2ArrivalDate, MIN_TWO_STOP_STAY_NIGHTS), endDate: addCalendarDays(h2ArrivalDate, MAX_TWO_STOP_STAY_NIGHTS), stopPolicy: "nonstop" }), cache: flightCalendarCache,
+        load: () => dependencies.flightCalendarProvider.getFlightCalendar({ origin: h2.airportCode, destination, departureWindow: { start: addCalendarDays(h2ArrivalDate, MIN_TWO_STOP_STAY_NIGHTS), end: addCalendarDays(h2ArrivalDate, MAX_TWO_STOP_STAY_NIGHTS) }, stopPolicy: "nonstop" }), warn,
+      });
+      twoStopCalendarWallMs += elapsedMs(finalCalendarStartedAt);
+      recordStageCache("calendar", finalCalendar.cacheStatus, "finalCalendarCalls");
+      const finalDate = selectCalendarDate(h2ArrivalDate, finalCalendar.value);
+      if (!finalDate) continue;
+      const finalDetailedStartedAt = nowMs();
+      const finalResult = await runCachedFlightOffers({
+        key: buildFlightOffersCacheKey({ origin: h2.airportCode, destination, departureDate: finalDate.departureDate, adults: input.adults }), cache: flightOffersCache,
+        load: () => dependencies.flightProvider.searchOneWay({ origin: h2.airportCode, destination, departureWindow: { start: finalDate.departureDate, end: finalDate.departureDate }, adults: input.adults }), warn,
+      });
+      twoStopDetailedWallMs += elapsedMs(finalDetailedStartedAt);
+      recordStageCache("detailed", finalResult.cacheStatus, "finalDetailedCalls");
+      const finalLeg = selectNonstopOffer(finalResult.value, h2.airportCode, destination, finalDate.departureDate);
+      if (!finalLeg) continue;
+      const price = totalPrice([prepared.firstLeg, middleLeg, finalLeg]);
+      if (!price) { failures.push(`${h1.airportCode} → ${h2.airportCode}: leg currencies differ.`); continue; }
+      const route: VerifiedTwoStopRoute = { h1, h2, firstLeg: prepared.firstLeg, middleLeg, finalLeg, h1StayNights: middleDate.stayNights, h2StayNights: finalDate.stayNights, totalPrice: price, totalDuration: prepared.firstLeg.durationMinutes + middleLeg.durationMinutes + finalLeg.durationMinutes, scoreBreakdown: { price: 0, duration: 0, stops: 0, detour: 0, stay: 0, final: 0 }, score: 0 };
+      verified.push(route);
+      dependencies.onItineraryVerified?.(createItinerary({ origin, destination, score: route.score, legs: [
+        { flight: route.firstLeg, stopoverAfter: { airportCode: route.h1.airportCode, city: route.h1.city, country: route.h1.country, nights: route.h1StayNights } },
+        { flight: route.middleLeg, stopoverAfter: { airportCode: route.h2.airportCode, city: route.h2.city, country: route.h2.country, nights: route.h2StayNights } },
+        { flight: route.finalLeg },
+      ] }));
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown optional two-stop failure.";
-      warn(`Two-stop discovery failed for ${h1.airportCode}: ${message}`);
-      failures.push(`${h1.airportCode}: ${message}`);
-      technicalFailureCount += 1;
+      warn(`Two-stop pair failed for ${h1.airportCode} → ${h2.airportCode}: ${message}`);
+      failures.push(`${h1.airportCode} → ${h2.airportCode}: ${message}`);
     }
   }
   const rankedRoutes = scoreRoutes(verified).slice(0, input.targetResults);
@@ -498,7 +577,9 @@ export async function discoverTwoStopRoutes(
       h2: route.h2.airportCode,
       score: route.scoreBreakdown,
     })),
-    h1Candidates, h2Candidates, attemptedPairs, failures, technicalFailureCount, api,
+    h1Candidates, h2Candidates,
+    pairAttemptSchedule: pairSchedule.map((entry) => ({ h1: entry.h1.airportCode, h2: entry.h2.airportCode })),
+    attemptedPairs, failures, technicalFailureCount, api,
     timing: {
       twoStopH1SelectionMs,
       twoStopExploreWallMs: Number(twoStopExploreWallMs.toFixed(2)),
