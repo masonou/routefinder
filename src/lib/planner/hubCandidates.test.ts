@@ -97,6 +97,28 @@ test("ranks lower-detour hubs above extreme detours and removes endpoints", asyn
   assert.ok((candidates[0]?.detourRatio ?? Infinity) < (candidates[1]?.detourRatio ?? 0));
 });
 
+test("prioritizes reverse-network-supported hubs without bypassing geography", async () => {
+  const candidates = await generateHubCandidates(
+    {
+      origin: "LCA",
+      destination: "DPS",
+      departureDate: "2026-09-01",
+      reverseDestinationNetwork: new Set(["NQZ", "LHR"]),
+    },
+    providerWith([
+      directDestination("DXB", 25.2532, 55.3657, { indicativePrice: 100, flightDurationMinutes: 240 }),
+      directDestination("NQZ", 51.0222, 71.4669, { indicativePrice: 900, flightDurationMinutes: 900 }),
+      // LHR is reverse-supported but still fails the unchanged 1.6 detour rule.
+      directDestination("LHR", 51.47, -0.46),
+    ]),
+  );
+
+  assert.deepEqual(candidates.map((candidate) => candidate.airportCode), ["NQZ", "DXB"]);
+  assert.equal(candidates[0]?.reverseNetworkMatch, true);
+  assert.equal(candidates[1]?.reverseNetworkMatch, false);
+  assert.ok(candidates.every((candidate) => candidate.detourRatio <= 1.6));
+});
+
 function variant(
   airportCode: string,
   firstLegDepartureDate: string,

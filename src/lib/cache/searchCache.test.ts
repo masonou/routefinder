@@ -37,7 +37,7 @@ test("identical normalized searches use the same versioned cache key", () => {
     adults: 1,
   });
 
-  assert.equal(firstKey, "routefinder:search:v16:BNE:LCA:2026-08-17:1:dynamic:normal");
+  assert.equal(firstKey, "routefinder:search:v17-reverse-explore:BNE:LCA:2026-08-17:1:dynamic:normal");
   assert.equal(firstKey, secondKey);
 });
 

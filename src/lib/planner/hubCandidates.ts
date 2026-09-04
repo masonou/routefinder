@@ -25,6 +25,8 @@ export interface HubCandidate {
   indicativeFirstLegPrice?: number;
   currency?: string;
   firstLegDurationMinutes?: number;
+  /** Destination-origin Explore saw this airport; a proxy signal only. */
+  reverseNetworkMatch?: boolean;
   candidateScore: number;
 }
 
@@ -32,6 +34,7 @@ export interface GenerateHubCandidatesInput {
   origin: string;
   destination: string;
   departureDate: string;
+  reverseDestinationNetwork?: ReadonlySet<string>;
 }
 
 function normaliseAirportCode(code: string): string {
@@ -87,6 +90,7 @@ function toHubCandidate(
   originCoordinates: Coordinates,
   destinationCoordinates: Coordinates,
   directDistanceKm: number,
+  reverseDestinationNetwork: ReadonlySet<string>,
 ): HubCandidate | null {
   const coordinates = {
     latitude: directDestination.latitude,
@@ -118,6 +122,9 @@ function toHubCandidate(
     ...(directDestination.flightDurationMinutes === undefined
       ? {}
       : { firstLegDurationMinutes: directDestination.flightDurationMinutes }),
+    reverseNetworkMatch: reverseDestinationNetwork.has(
+      normaliseAirportCode(directDestination.airportCode),
+    ),
     candidateScore: calculateHubCandidateScoreBreakdown(
       detourRatio,
       directDestination.flightDurationMinutes,
@@ -128,6 +135,7 @@ function toHubCandidate(
 
 function compareHubCandidates(left: HubCandidate, right: HubCandidate): number {
   return (
+    Number(Boolean(right.reverseNetworkMatch)) - Number(Boolean(left.reverseNetworkMatch)) ||
     right.candidateScore - left.candidateScore ||
     left.detourRatio - right.detourRatio ||
     (left.indicativeFirstLegPrice ?? Infinity) -
@@ -237,6 +245,7 @@ export async function generateHubCandidates(
     origin,
     departureDate: input.departureDate,
   });
+  const reverseDestinationNetwork = input.reverseDestinationNetwork ?? new Set<string>();
   const candidates = directDestinations
     .filter(
       (directDestination) =>
@@ -249,6 +258,7 @@ export async function generateHubCandidates(
         originCoordinates,
         destinationCoordinates,
         directDistanceKm,
+        reverseDestinationNetwork,
       ),
     )
     .filter((candidate): candidate is HubCandidate => candidate !== null)
