@@ -308,7 +308,7 @@ test("dynamic orchestration maps verified routes into generic itineraries", asyn
 
   // The existing one-stop calls are retained, followed by a bounded optional
   // two-stop probe because this long route has an unfilled portfolio.
-  assert.ok(exploreCalls >= 4 && exploreCalls <= 6);
+  assert.ok(exploreCalls >= 8 && exploreCalls <= 10);
   assert.ok(calendarCalls >= 5 && calendarCalls <= 9);
   assert.ok(detailedCalls >= 5 && detailedCalls <= 9);
   assert.equal(itineraries.length, 3);
@@ -359,7 +359,9 @@ test("three clean verified adventures skip fallback Calendar and detailed work",
   assert.ok(result.cleanOnwardCalls >= 3);
   assert.equal(result.fallbackCalendarCalls, 0);
   assert.equal(result.fallbackDetailedCalls, 0);
-  assert.equal(result.twoStopExploreCalls, 0);
+  // The four destination-origin Reverse Explore calls are independent of the
+  // optional two-stop branch and remain present even when it is skipped.
+  assert.equal(result.twoStopExploreCalls, 4);
   assert.deepEqual(result.twoStopDiscovery, {
     explored: false,
     canExplore: true,
@@ -463,7 +465,7 @@ test("dynamic orchestration returns no results when Explore finds no viable cand
     flightProvider: flightProvider(),
   });
   assert.deepEqual(result, []);
-  assert.equal(exploreCalls, 4);
+  assert.equal(exploreCalls, 8);
   assert.equal(calendarCalls, 1);
 });
 
@@ -622,14 +624,35 @@ test("overlapping flexible searches reuse cached Explore days independently", as
     { directDestinationsCache: cache, directDestinationsProvider: provider },
   );
 
-  assert.equal(providerCalls, 5);
+  assert.equal(providerCalls, 10);
   assert.deepEqual(
     overlapping.exploreResults.map((result) => result.cacheStatus),
     ["HIT", "HIT", "HIT", "MISS"],
   );
 });
 
-test("the flexible pipeline remains within the 4 Explore, 9 Calendar, and 7 detailed-call budget", async () => {
+test("reverse Explore failure degrades to forward-only candidate discovery", async () => {
+  const discovery = await discoverFlexibleHubCandidates(
+    { origin: "LCA", destination: "DPS", earliestDeparture: "2026-09-01" },
+    {
+      directDestinationsCache: null,
+      directDestinationsProvider: {
+        async getDirectDestinations(input) {
+          if (input.origin === "DPS") throw new Error("reverse unavailable");
+          return exploredDestinations.map((destination) => ({ ...destination, outboundDate: input.departureDate }));
+        },
+      },
+      warn: () => {},
+    },
+  );
+
+  assert.equal(discovery.reverseDestinationNetwork.size, 0);
+  assert.equal(discovery.reverseFailures.length, 4);
+  assert.ok(discovery.calendarCandidates.length > 0);
+  assert.ok(discovery.calendarCandidates.every((candidate) => !candidate.reverseNetworkMatch));
+});
+
+test("the flexible pipeline adds only the four bounded Reverse Explore calls", async () => {
   let exploreCalls = 0;
   let calendarCalls = 0;
   let detailedCalls = 0;
@@ -683,10 +706,10 @@ test("the flexible pipeline remains within the 4 Explore, 9 Calendar, and 7 deta
   // One-stop retains its former 20-call envelope. The bounded optional branch
   // can add at most two Explore, two first-leg detailed, and four pair checks
   // (Calendar + detailed for each remaining leg).
-  assert.ok(exploreCalls <= 6);
+  assert.ok(exploreCalls <= 10);
   assert.ok(calendarCalls <= 17);
   assert.ok(detailedCalls <= 17);
-  assert.ok(exploreCalls + calendarCalls + detailedCalls <= 40);
+  assert.ok(exploreCalls + calendarCalls + detailedCalls <= 44);
 });
 
 test("a direct baseline is first and does not replace any adventure", () => {

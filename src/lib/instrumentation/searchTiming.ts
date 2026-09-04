@@ -13,6 +13,10 @@ export interface SearchTiming {
   exploreRequests: number;
   exploreLiveRequests: number;
   exploreCacheHits: number;
+  reverseExploreWallMs: number;
+  reverseExploreRequests: number;
+  reverseExploreLiveRequests: number;
+  reverseExploreCacheHits: number;
   stage1ProcessingMs: number;
   cleanCalendarWallMs: number;
   cleanCalendarRequests: number;
@@ -77,6 +81,7 @@ export function countCacheStatuses(lookups: Array<{ cacheStatus: "HIT" | "MISS" 
 export function emptyRequestTiming(): RequestTiming {
   return {
     exploreWallMs: 0, exploreRequests: 0, exploreLiveRequests: 0, exploreCacheHits: 0,
+    reverseExploreWallMs: 0, reverseExploreRequests: 0, reverseExploreLiveRequests: 0, reverseExploreCacheHits: 0,
     stage1ProcessingMs: 0,
     cleanCalendarWallMs: 0, cleanCalendarRequests: 0, cleanCalendarLiveRequests: 0, cleanCalendarCacheHits: 0,
     cleanDetailedWallMs: 0, cleanDetailedRequests: 0, cleanDetailedLiveRequests: 0, cleanDetailedCacheHits: 0,

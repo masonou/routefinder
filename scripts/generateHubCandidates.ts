@@ -247,26 +247,33 @@ async function run(): Promise<void> {
   const dates = enumerateDateWindow({ start: departureDate, end: addCalendarDays(departureDate, DEPARTURE_FLEX_DAYS) });
   const cache = getDirectDestinationsCache();
   const exploreStartedAt = performance.now();
-  const explore = await Promise.all(dates.map(async (date) => {
+  const exploreByOrigin = (exploreOrigin: string) => Promise.all(dates.map(async (date) => {
     const result = await runCachedDirectDestinations({
-      key: buildDirectDestinationsCacheKey({ origin, departureDate: date }),
+      key: buildDirectDestinationsCacheKey({ origin: exploreOrigin, departureDate: date }),
       cache,
-      load: () => searchApiDirectDestinationsProvider.getDirectDestinations({ origin, departureDate: date }),
+      load: () => searchApiDirectDestinationsProvider.getDirectDestinations({ origin: exploreOrigin, departureDate: date }),
     });
     return { date, ...result };
   }));
+  const [explore, reverseExplore] = await Promise.all([exploreByOrigin(origin), exploreByOrigin(destination)]);
   const exploreWallMs = performance.now() - exploreStartedAt;
+  const reverseDestinationNetwork = new Set(reverseExplore.flatMap((result) => result.value.map((entry) => entry.airportCode.trim().toUpperCase())));
   const raw = explore.flatMap((result) => result.value).map(makeCandidate)
     .filter((candidate): candidate is DiagnosticCandidate => candidate !== undefined);
   const geography = raw.filter((candidate) => candidate.detourRatio <= MAX_HUB_DETOUR_RATIO).sort(compare);
   // Uses the production generator with the already-returned Explore payload: no extra live calls.
   const perDate = await Promise.all(explore.map((result) => generateHubCandidates(
-    { origin, destination, departureDate: result.date },
+    { origin, destination, departureDate: result.date, reverseDestinationNetwork },
     { getDirectDestinations: async () => result.value },
   )));
   const stage1 = perDate.flat();
+  const version1Stage1 = (await Promise.all(explore.map((result) => generateHubCandidates(
+    { origin, destination, departureDate: result.date },
+    { getDirectDestinations: async () => result.value },
+  )))).flat();
   const preBudget = beforeCalendarBudget(stage1);
   const calendar = selectCalendarCandidateVariants(stage1);
+  const version1Calendar = selectCalendarCandidateVariants(version1Stage1);
   const stage1Keys = new Set(stage1.map(key));
   const preBudgetKeys = new Set(preBudget.map(key));
   const calendarKeys = new Set(calendar.map(key));
@@ -274,6 +281,14 @@ async function run(): Promise<void> {
   console.log(`\n${"=".repeat(54)}\n${origin} → ${destination} · Stage 1 diagnostic\n${"=".repeat(54)}`);
   console.log(`Rules: detour <= ${MAX_HUB_DETOUR_RATIO}; ${MAX_HUB_CANDIDATES} candidates per Explore date; ${MAX_DEPARTURE_VARIANTS_PER_HUB} variants per hub; top ${MAX_CALENDAR_CANDIDATES} to Calendar.`);
   table("EXPLORE BY DATE", explore.map((result) => ({ exploreDate: result.date, directDestinations: result.value.length, cache: result.cacheStatus })));
+  console.log("\nREVERSE DESTINATION NETWORK");
+  console.log(`Explore dates: ${dates.join(", ")}`);
+  console.log(`raw destinations: ${reverseExplore.reduce((sum, result) => sum + result.value.length, 0)}; unique reverse airports: ${reverseDestinationNetwork.size}.`);
+  table("FORWARD / REVERSE OVERLAP", stage1.map((candidate) => ({
+    hub: candidate.airportCode, forward: "yes", reverse: candidate.reverseNetworkMatch ? "yes" : "no",
+    detour: candidate.detourRatio, stage1Score: candidate.candidateScore,
+  })));
+  console.log(`forward unique hubs: ${uniqueHubs(stage1)}; overlap: ${new Set(stage1.filter((candidate) => candidate.reverseNetworkMatch).map((candidate) => candidate.airportCode)).size}.`);
   console.log(`Explore aggregate: ${explore.reduce((sum, result) => sum + result.value.length, 0)} raw results; ${uniqueHubs(raw)} unique airports; ${new Set(raw.map(key)).size} unique airport/date variants.`);
   const source = findAirportByCode(origin);
   const target = findAirportByCode(destination);
@@ -314,6 +329,8 @@ async function run(): Promise<void> {
         : "not_selected_budget",
   })));
   console.log(`Calendar budget: ${MAX_CALENDAR_CANDIDATES}; eligible unique hubs before selection: ${uniqueHubs(preBudget)}; selected variants: ${calendar.length}; selected unique hubs: ${uniqueHubs(calendar)}.`);
+  console.log(`VERSION 1 CALENDAR SELECTION (local only): ${version1Calendar.map((candidate) => candidate.airportCode).join(", ")}`);
+  console.log(`REVERSE-AWARE CALENDAR SELECTION: ${calendar.map((candidate) => `${candidate.airportCode}${candidate.reverseNetworkMatch ? " *" : ""}`).join(", ")}`);
   console.log(`Before Calendar budget: ${uniqueHubs(preBudget)} unique hubs / ${preBudget.length} variants. After: ${uniqueHubs(calendar)} unique hubs / ${calendar.length} variants.`);
   const currentHubSet = new Set(geography.map((candidate) => candidate.airportCode));
   table("COUNTERFACTUAL GEOGRAPHY (LOCAL ONLY; NO CALENDAR CALLS)", [1.8, 2, 2.25].map((cutoff) => {
@@ -423,6 +440,10 @@ async function run(): Promise<void> {
     });
   console.log("\nCURRENT PIPELINE");
   console.log(`CLEAN CALENDAR\n${cleanValidation.validatedCandidates.length} candidates`);
+  const reverseCalendarLookups = cleanValidation.calendarLookups.filter((lookup) =>
+    stage1.some((candidate) => candidate.airportCode === lookup.airportCode && candidate.reverseNetworkMatch),
+  );
+  console.log(`Calendar reverse-supported: ${reverseCalendarLookups.length}/${cleanValidation.calendarLookups.length}; forward-only: ${cleanValidation.calendarLookups.length - reverseCalendarLookups.length}.`);
   console.log(`CLEAN DETAILED\nattempted: ${cleanDetailed.attemptedCandidates}\nverified: ${cleanDetailed.verifiedRoutes.length}`);
   console.log(`REMAINING SLOTS\n${remainingSlots}`);
   if (fallbackValidation) {
@@ -447,11 +468,9 @@ async function run(): Promise<void> {
         origin,
         destination,
         adults: 1,
-        h1Candidates: [
-          ...cleanValidation.validatedCandidates,
-          ...(fallbackValidation?.validatedCandidates ?? []),
-        ],
+        h1Candidates: stage1,
         observedConnections: observedConnectionsByH1(offerTraces),
+        reverseDestinationNetwork,
         targetResults: twoStopTarget,
       },
       {
@@ -464,10 +483,13 @@ async function run(): Promise<void> {
   if (twoStop) {
     table("H1 CANDIDATES", twoStop.h1Candidates.map((candidate) => ({
       airport: candidate.airportCode, date: candidate.firstLegDepartureDate,
-      validationScore: candidate.validationScore,
+      candidateScore: candidate.candidateScore,
     })));
     table("H2 CANDIDATES", twoStop.h2Candidates.flatMap(({ h1, candidates }) => candidates.map((candidate) => ({
       h1, airport: candidate.airportCode, source: candidate.source,
+      h1Explore: candidate.fromH1Explore ? "yes" : "no",
+      reverseMatch: candidate.reverseNetworkMatch ? "yes" : "no",
+      observedConnection: candidate.observedConnection ? "yes" : "no",
       combinedDetour: candidate.combinedPathDetourRatio,
       indicativePrice: candidate.indicativePrice ?? "",
       candidateScore: candidate.candidateScore,

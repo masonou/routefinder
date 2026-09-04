@@ -104,7 +104,9 @@ export interface FlexibleHubDiscoveryResult {
   candidates: HubCandidate[];
   calendarCandidates: HubCandidate[];
   failures: { departureDate: string; message: string }[];
-  timing: Pick<RequestTiming, "exploreWallMs" | "exploreRequests" | "exploreLiveRequests" | "exploreCacheHits" | "stage1ProcessingMs">;
+  reverseDestinationNetwork: Set<string>;
+  reverseFailures: { departureDate: string; message: string }[];
+  timing: Pick<RequestTiming, "exploreWallMs" | "exploreRequests" | "exploreLiveRequests" | "exploreCacheHits" | "reverseExploreWallMs" | "reverseExploreRequests" | "reverseExploreLiveRequests" | "reverseExploreCacheHits" | "stage1ProcessingMs">;
 }
 
 export function toDynamicItinerary(route: VerifiedHubRoute): Itinerary {
@@ -259,50 +261,49 @@ export async function discoverFlexibleHubCandidates(
   const warn = dependencies.warn ?? console.warn;
   const departureDates = getInitialDepartureDates(input.earliestDeparture);
 
-  const exploreStartedAt = nowMs();
-  const exploreResults = await Promise.all(
-    departureDates.map(async (departureDate): Promise<ExploreDiscoveryResult & {
-      candidates?: HubCandidate[];
-      stage1ProcessingMs?: number;
-      cause?: ReturnType<typeof normalizeSearchApiError>;
-    }> => {
+  type RawExploreResult = ExploreDiscoveryResult & {
+    value?: import("../providers/types.ts").DirectDestination[];
+    cause?: ReturnType<typeof normalizeSearchApiError>;
+  };
+  const runExplore = (origin: string, label: "Travel" | "Reverse") => Promise.all(
+    departureDates.map(async (departureDate): Promise<RawExploreResult> => {
       try {
         const result = await runCachedDirectDestinations({
           key: buildDirectDestinationsCacheKey({
-            origin: input.origin,
+            origin,
             departureDate,
           }),
           cache,
           load: () =>
             directDestinationsProvider.getDirectDestinations({
-              origin: input.origin,
+              origin,
               departureDate,
             }),
           warn,
         });
-        const stage1StartedAt = nowMs();
-        const candidates = await generateHubCandidates(
-          { origin: input.origin, destination: input.destination, departureDate },
-          { getDirectDestinations: async () => result.value },
-        );
         return {
           departureDate,
           directDestinationCount: result.value.length,
-          candidateCount: candidates.length,
-          hubCodes: [...new Set(candidates.map((candidate) => candidate.airportCode))],
           cacheStatus: result.cacheStatus,
-          candidates,
-          stage1ProcessingMs: elapsedMs(stage1StartedAt),
+          value: result.value,
         };
       } catch (error) {
         const cause = normalizeSearchApiError(error);
         const message = cause.message;
-        warn(`Travel Explore failed for ${departureDate}: ${message}`);
+        warn(`${label} Explore failed for ${departureDate}: ${message}`);
         return { departureDate, error: message, cause };
       }
     }),
   );
+  const exploreStartedAt = nowMs();
+  const forwardPromise = runExplore(input.origin, "Travel");
+  const reverseStartedAt = nowMs();
+  // SearchAPI Explore is departure-oriented. Destination-origin responses are
+  // only a candidate-ranking proxy, never direction-of-travel verification.
+  const reversePromise = runExplore(input.destination, "Reverse");
+  const [exploreResults, reverseResults] = await Promise.all([forwardPromise, reversePromise]);
   const exploreWallMs = elapsedMs(exploreStartedAt);
+  const reverseExploreWallMs = elapsedMs(reverseStartedAt);
   const failures = exploreResults
     .filter((result) => result.error !== undefined)
     .map(({ departureDate, error }) => ({
@@ -317,14 +318,26 @@ export async function discoverFlexibleHubCandidates(
     );
   }
 
-  // This is local CPU time only. Candidate work already runs in the existing
-  // Explore promise branch, so recording it here does not move or serialize it.
-  const stage1ProcessingMs = Number(exploreResults.reduce(
-    (sum, result) => sum + ("stage1ProcessingMs" in result ? result.stage1ProcessingMs ?? 0 : 0), 0,
-  ).toFixed(2));
-  const candidates = exploreResults.flatMap((result) => ("candidates" in result ? result.candidates ?? [] : []));
+  const reverseDestinationNetwork = new Set(reverseResults.flatMap((result) =>
+    result.value?.map((destination) => destination.airportCode.trim().toUpperCase()) ?? [],
+  ));
+  const reverseFailures = reverseResults
+    .filter((result) => result.error !== undefined)
+    .map(({ departureDate, error }) => ({ departureDate, message: error as string }));
+  const stage1StartedAt = nowMs();
+  const candidates = (await Promise.all(exploreResults.flatMap(async (result) => {
+    if (!result.value) return [];
+    return generateHubCandidates(
+      { origin: input.origin, destination: input.destination, departureDate: result.departureDate, reverseDestinationNetwork },
+      { getDirectDestinations: async () => result.value as import("../providers/types.ts").DirectDestination[] },
+    );
+  }))).flat();
+  const stage1ProcessingMs = elapsedMs(stage1StartedAt);
   const exploreCounts = countCacheStatuses(
     exploreResults.flatMap((result) => result.cacheStatus ? [{ cacheStatus: result.cacheStatus }] : []),
+  );
+  const reverseExploreCounts = countCacheStatuses(
+    reverseResults.flatMap((result) => result.cacheStatus ? [{ cacheStatus: result.cacheStatus }] : []),
   );
   return {
     departureDates,
@@ -333,21 +346,23 @@ export async function discoverFlexibleHubCandidates(
       ...(result.directDestinationCount === undefined
         ? {}
         : { directDestinationCount: result.directDestinationCount }),
-      ...(result.candidateCount === undefined
-        ? {}
-        : { candidateCount: result.candidateCount }),
-      ...(result.hubCodes === undefined ? {} : { hubCodes: result.hubCodes }),
       ...(result.cacheStatus === undefined ? {} : { cacheStatus: result.cacheStatus }),
       ...(result.error === undefined ? {} : { error: result.error }),
     })),
     candidates,
     calendarCandidates: selectCalendarCandidateVariants(candidates),
     failures,
+    reverseDestinationNetwork,
+    reverseFailures,
     timing: {
       exploreWallMs,
       exploreRequests: exploreCounts.requests,
       exploreLiveRequests: exploreCounts.liveRequests,
       exploreCacheHits: exploreCounts.cacheHits,
+      reverseExploreWallMs,
+      reverseExploreRequests: reverseExploreCounts.requests,
+      reverseExploreLiveRequests: reverseExploreCounts.liveRequests,
+      reverseExploreCacheHits: reverseExploreCounts.cacheHits,
       stage1ProcessingMs,
     },
   };
@@ -553,17 +568,16 @@ export async function searchDynamicRoutePortfolio(
     // the one-stop verifier selects an offer. This lets connections inform H2
     // discovery while Explore remains an independent source.
     try {
-      const h1Candidates = [
-        ...cleanValidation.validatedCandidates,
-        ...(fallbackValidation?.validatedCandidates ?? []),
-      ];
       const result = await discoverTwoStopRoutes(
         {
           origin: request.origin,
           destination: request.destination,
           adults: request.adults ?? 1,
-          h1Candidates,
+          // H1 is selected from the usable forward Explore pool, not only
+          // from one-stop survivors. Its first leg is still detailed-verified.
+          h1Candidates: discovery.candidates,
           observedConnections: observedConnectionsByH1(detailedTraces),
+          reverseDestinationNetwork: discovery.reverseDestinationNetwork,
           targetResults: forcePortfolioFull
             ? MAX_TWO_STOP_RESULTS
             : twoStopEligibility.targetResults,
@@ -636,8 +650,8 @@ function applyDirectTiming(timing: RequestTiming, direct: DirectRouteTiming | un
 }
 
 function refreshProviderCounts(timing: RequestTiming): RequestTiming {
-  timing.providerLiveRequests = timing.exploreLiveRequests + timing.cleanCalendarLiveRequests + timing.cleanDetailedLiveRequests + timing.fallbackCalendarLiveRequests + timing.fallbackDetailedLiveRequests + timing.directCalendarLiveRequests + timing.directDetailedLiveRequests + timing.twoStopExploreLiveRequests + timing.twoStopCalendarLiveRequests + timing.twoStopDetailedLiveRequests;
-  timing.providerCacheHits = timing.exploreCacheHits + timing.cleanCalendarCacheHits + timing.cleanDetailedCacheHits + timing.fallbackCalendarCacheHits + timing.fallbackDetailedCacheHits + timing.directCalendarCacheHits + timing.directDetailedCacheHits + timing.twoStopExploreCacheHits + timing.twoStopCalendarCacheHits + timing.twoStopDetailedCacheHits;
+  timing.providerLiveRequests = timing.exploreLiveRequests + timing.reverseExploreLiveRequests + timing.cleanCalendarLiveRequests + timing.cleanDetailedLiveRequests + timing.fallbackCalendarLiveRequests + timing.fallbackDetailedLiveRequests + timing.directCalendarLiveRequests + timing.directDetailedLiveRequests + timing.twoStopExploreLiveRequests + timing.twoStopCalendarLiveRequests + timing.twoStopDetailedLiveRequests;
+  timing.providerCacheHits = timing.exploreCacheHits + timing.reverseExploreCacheHits + timing.cleanCalendarCacheHits + timing.cleanDetailedCacheHits + timing.fallbackCalendarCacheHits + timing.fallbackDetailedCacheHits + timing.directCalendarCacheHits + timing.directDetailedCacheHits + timing.twoStopExploreCacheHits + timing.twoStopCalendarCacheHits + timing.twoStopDetailedCacheHits;
   return timing;
 }
 

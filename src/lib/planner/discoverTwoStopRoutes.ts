@@ -46,7 +46,6 @@ import { isFlightWithinDepartureWindow, isReasonableFlight } from "./filters.ts"
 import type { HubCandidate } from "./hubCandidates.ts";
 import type { DetailedOfferTrace } from "./verifyHubCandidates.ts";
 import { elapsedMs, nowMs, type RequestTiming } from "../instrumentation/searchTiming.ts";
-import type { ValidatedHubCandidate } from "./validateHubCandidates.ts";
 
 type WarningFunction = (message: string) => void;
 
@@ -116,6 +115,9 @@ export interface TwoStopH2Candidate {
   city: string;
   country: string;
   source: "observed_connection" | "explore" | "observed_connection+explore";
+  fromH1Explore: boolean;
+  reverseNetworkMatch: boolean;
+  observedConnection: boolean;
   combinedPathDetourRatio: number;
   indicativePrice?: number;
   currency?: string;
@@ -146,8 +148,9 @@ export interface DiscoverTwoStopRoutesInput {
   origin: string;
   destination: string;
   adults: number;
-  h1Candidates: ValidatedHubCandidate[];
+  h1Candidates: HubCandidate[];
   observedConnections: Map<string, ObservedConnectionAirport[]>;
+  reverseDestinationNetwork?: ReadonlySet<string>;
   targetResults: number;
 }
 
@@ -169,7 +172,7 @@ export interface TwoStopDiscoveryResult {
     h2: string;
     score: TwoStopScoreBreakdown;
   }>;
-  h1Candidates: ValidatedHubCandidate[];
+  h1Candidates: HubCandidate[];
   h2Candidates: Array<{ h1: string; candidates: TwoStopH2Candidate[] }>;
   attemptedPairs: number;
   failures: string[];
@@ -180,7 +183,7 @@ export interface TwoStopDiscoveryResult {
 }
 
 interface VerifiedTwoStopRoute {
-  h1: ValidatedHubCandidate;
+  h1: HubCandidate;
   h2: TwoStopH2Candidate;
   firstLeg: FlightOffer;
   middleLeg: FlightOffer;
@@ -230,10 +233,10 @@ function selectCalendarDate(arrivalDate: string, calendar: FlightCalendarDay[]):
     )[0];
 }
 
-function h1Selection(candidates: ValidatedHubCandidate[]): ValidatedHubCandidate[] {
-  const selected = new Map<string, ValidatedHubCandidate>();
+function h1Selection(candidates: HubCandidate[]): HubCandidate[] {
+  const selected = new Map<string, HubCandidate>();
   for (const candidate of [...candidates].sort((left, right) =>
-    right.validationScore - left.validationScore || left.airportCode.localeCompare(right.airportCode),
+    right.candidateScore - left.candidateScore || left.airportCode.localeCompare(right.airportCode),
   )) {
     const code = candidate.airportCode.trim().toUpperCase();
     if (!selected.has(code)) selected.set(code, candidate);
@@ -252,9 +255,18 @@ function h2CandidateScore(input: {
   return Number((geography + observed + price + duration).toFixed(3));
 }
 
+function h2EvidenceTier(candidate: Pick<TwoStopH2Candidate, "fromH1Explore" | "reverseNetworkMatch" | "observedConnection">): number {
+  if (candidate.fromH1Explore && candidate.reverseNetworkMatch && candidate.observedConnection) return 5;
+  if (candidate.fromH1Explore && candidate.reverseNetworkMatch) return 4;
+  if (candidate.observedConnection && candidate.reverseNetworkMatch) return 3;
+  if (candidate.observedConnection) return 2;
+  return candidate.fromH1Explore ? 1 : 0;
+}
+
 export function rankTwoStopH2Candidates(input: {
   origin: string; h1: HubCandidate; destination: string;
   observedConnections: ObservedConnectionAirport[]; exploreDestinations: DirectDestination[];
+  reverseDestinationNetwork?: ReadonlySet<string>;
 }): TwoStopH2Candidate[] {
   const origin = input.origin.trim().toUpperCase();
   const h1 = input.h1.airportCode.trim().toUpperCase();
@@ -266,11 +278,11 @@ export function rankTwoStopH2Candidates(input: {
   const directDistance = distanceKm(originCoordinates, destinationCoordinates);
   if (directDistance <= 0) return [];
   const choices = new Map<string, {
-    airportCode: string; city: string; country: string; observed: boolean;
+    airportCode: string; city: string; country: string; observed: boolean; fromH1Explore: boolean;
     explore?: DirectDestination;
   }>();
   for (const observed of input.observedConnections) {
-    choices.set(observed.airportCode, { ...observed, observed: true });
+    choices.set(observed.airportCode, { ...observed, observed: true, fromH1Explore: false });
   }
   for (const explore of input.exploreDestinations) {
     const code = explore.airportCode.trim().toUpperCase();
@@ -278,6 +290,7 @@ export function rankTwoStopH2Candidates(input: {
     choices.set(code, {
       airportCode: code, city: explore.city, country: explore.country,
       observed: existing?.observed ?? false, explore,
+      fromH1Explore: true,
     });
   }
   return [...choices.values()].flatMap((choice) => {
@@ -294,6 +307,9 @@ export function rankTwoStopH2Candidates(input: {
       : "explore";
     return [{
       airportCode: choice.airportCode, city: choice.city, country: choice.country, source,
+      fromH1Explore: choice.fromH1Explore,
+      reverseNetworkMatch: (input.reverseDestinationNetwork ?? new Set<string>()).has(choice.airportCode),
+      observedConnection: choice.observed,
       combinedPathDetourRatio: Number(detour.toFixed(4)),
       ...(choice.explore?.indicativePrice === undefined ? {} : { indicativePrice: choice.explore.indicativePrice }),
       ...(choice.explore?.currency ? { currency: choice.explore.currency } : {}),
@@ -301,6 +317,7 @@ export function rankTwoStopH2Candidates(input: {
       candidateScore: h2CandidateScore({ detour, observed: choice.observed, price: choice.explore?.indicativePrice, duration: choice.explore?.flightDurationMinutes }),
     }];
   }).sort((left, right) =>
+    h2EvidenceTier(right) - h2EvidenceTier(left) ||
     right.candidateScore - left.candidateScore || left.combinedPathDetourRatio - right.combinedPathDetourRatio ||
     left.airportCode.localeCompare(right.airportCode),
   ).slice(0, MAX_H2_PER_H1);
@@ -415,6 +432,7 @@ export async function discoverTwoStopRoutes(
       const rankedH2 = rankTwoStopH2Candidates({
         origin, h1, destination, exploreDestinations: exploreResult.value,
         observedConnections: input.observedConnections.get(h1.airportCode.trim().toUpperCase()) ?? [],
+        reverseDestinationNetwork: input.reverseDestinationNetwork,
       });
       twoStopPairCandidateProcessingMs += elapsedMs(pairProcessingStartedAt);
       h2Candidates.push({ h1: h1.airportCode, candidates: rankedH2 });

@@ -52,6 +52,7 @@ test("H2 discovery combines observed connections with Explore and excludes endpo
   const candidates = rankTwoStopH2Candidates({
     origin: "BNE", h1: bangkok, destination: "LCA",
     observedConnections: [{ airportCode: "IST", city: "Istanbul", country: "Türkiye" }],
+    reverseDestinationNetwork: new Set(["IST"]),
     exploreDestinations: [
       { airportCode: "IST", city: "Istanbul", country: "Türkiye", latitude: 41.2753, longitude: 28.7519, outboundDate: "2026-09-04", indicativePrice: 180, currency: "EUR", flightDurationMinutes: 600 },
       { airportCode: "LCA", city: "Larnaca", country: "Cyprus", latitude: 34.8751, longitude: 33.6249, outboundDate: "2026-09-04" },
@@ -60,6 +61,8 @@ test("H2 discovery combines observed connections with Explore and excludes endpo
   assert.equal(candidates.length, 1);
   assert.equal(candidates[0]?.airportCode, "IST");
   assert.equal(candidates[0]?.source, "observed_connection+explore");
+  assert.equal(candidates[0]?.reverseNetworkMatch, true);
+  assert.equal(candidates[0]?.observedConnection, true);
   assert.ok((candidates[0]?.combinedPathDetourRatio ?? Infinity) <= 2);
 
   const evidence = observedConnectionsByH1([{
