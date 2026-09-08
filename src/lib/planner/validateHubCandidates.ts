@@ -22,6 +22,12 @@ import {
   addCalendarDays,
   calendarDayDifference,
 } from "../utils/dateWindow.ts";
+import {
+  elapsedMs,
+  emptyProviderPoolMetrics,
+  mergeProviderPoolMetrics,
+  type ProviderPoolMetrics,
+} from "../instrumentation/searchTiming.ts";
 import type { HubCandidate } from "./hubCandidates.ts";
 
 const STAY_PENALTY_PER_NIGHT = 0.04;
@@ -68,6 +74,7 @@ export interface ValidateHubCandidatesResult {
   nonstopCalendarChecks: number;
   fallbackCalendarChecks: number;
   cleanHubCount: number;
+  concurrency: ProviderPoolMetrics;
 }
 
 export interface ValidateHubCandidatesInput {
@@ -302,7 +309,7 @@ export async function validateHubCandidates(
   const validate = async (
     candidates: HubCandidate[],
     onwardPolicy: OnwardFlightPolicy,
-  ): Promise<CandidateValidationOutcome[]> => {
+  ): Promise<{ outcomes: CandidateValidationOutcome[]; concurrency: ProviderPoolMetrics }> => {
     const pendingCandidates: PendingCandidate[] = candidates.map((candidate) => ({
       candidate,
       startDate: addCalendarDays(candidate.firstLegDepartureDate, MIN_HUB_STAY_NIGHTS),
@@ -311,10 +318,19 @@ export async function validateHubCandidates(
     const stopPolicy =
       onwardPolicy === "nonstop" ? "nonstop" : "two_stops_or_fewer";
 
-    return mapWithConcurrency(
+    const validationStartedAt = performance.now();
+    const concurrency = emptyProviderPoolMetrics();
+    let inFlight = 0;
+    const outcomes = await mapWithConcurrency(
       pendingCandidates,
       CALENDAR_VALIDATION_CONCURRENCY,
       async ({ candidate, startDate, endDate }): Promise<CandidateValidationOutcome> => {
+      const queueWaitMs = elapsedMs(validationStartedAt);
+      concurrency.queueWaitMs += queueWaitMs;
+      concurrency.maxQueueWaitMs = Math.max(concurrency.maxQueueWaitMs, queueWaitMs);
+      const executionStartedAt = performance.now();
+      inFlight += 1;
+      concurrency.maxInFlight = Math.max(concurrency.maxInFlight, inFlight);
       try {
         const result = await runCachedFlightCalendar({
           key: buildFlightCalendarCacheKey({
@@ -358,15 +374,20 @@ export async function validateHubCandidates(
         const message = cause.message;
         warn(`Calendar validation failed for ${candidate.airportCode}: ${message}`);
         return { type: "failure", airportCode: candidate.airportCode, message, cause };
+      } finally {
+        concurrency.executionMs += elapsedMs(executionStartedAt);
+        inFlight -= 1;
       }
       },
     );
+    return { outcomes, concurrency };
   };
 
   const calendarCandidates = input.candidates.slice(0, MAX_CALENDAR_CANDIDATES);
-  const nonstopOutcomes = mode === "fallback"
-    ? []
+  const nonstopValidation = mode === "fallback"
+    ? { outcomes: [], concurrency: emptyProviderPoolMetrics() }
     : await validate(calendarCandidates, "nonstop");
+  const nonstopOutcomes = nonstopValidation.outcomes;
   const cleanCandidates = collapseValidatedHubVariants(rankValidatedCandidates(
     nonstopOutcomes
       .filter((outcome): outcome is CandidateValidationSuccess => outcome.type === "success")
@@ -384,9 +405,10 @@ export async function validateHubCandidates(
         : calendarCandidates
           .filter((candidate) => !cleanHubs.has(candidate.airportCode.trim().toUpperCase()))
           .slice(0, MAX_CONNECTING_FALLBACK_CALENDAR_CALLS);
-  const fallbackOutcomes = mode === "clean"
-    ? []
+  const fallbackValidation = mode === "clean"
+    ? { outcomes: [], concurrency: emptyProviderPoolMetrics() }
     : await validate(fallbackCandidates, "connecting_fallback");
+  const fallbackOutcomes = fallbackValidation.outcomes;
   const fallbackValidatedCandidates = collapseValidatedHubVariants(rankValidatedCandidates(
     fallbackOutcomes
       .filter((outcome): outcome is CandidateValidationSuccess => outcome.type === "success")
@@ -438,5 +460,9 @@ export async function validateHubCandidates(
     nonstopCalendarChecks: calendarCandidates.length,
     fallbackCalendarChecks: fallbackCandidates.length,
     cleanHubCount: cleanCandidates.length,
+    concurrency: mergeProviderPoolMetrics(
+      nonstopValidation.concurrency,
+      fallbackValidation.concurrency,
+    ),
   };
 }

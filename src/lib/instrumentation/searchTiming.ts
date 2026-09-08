@@ -20,10 +20,18 @@ export interface SearchTiming {
   cleanCalendarRequests: number;
   cleanCalendarLiveRequests: number;
   cleanCalendarCacheHits: number;
+  calendarQueueWaitMs: number;
+  calendarExecutionMs: number;
+  calendarMaxQueueWaitMs: number;
+  calendarMaxInFlight: number;
   cleanDetailedWallMs: number;
   cleanDetailedRequests: number;
   cleanDetailedLiveRequests: number;
   cleanDetailedCacheHits: number;
+  detailedQueueWaitMs: number;
+  detailedExecutionMs: number;
+  detailedMaxQueueWaitMs: number;
+  detailedMaxInFlight: number;
   fallbackTriggered: boolean;
   fallbackCalendarWallMs: number;
   fallbackCalendarRequests: number;
@@ -72,6 +80,33 @@ export interface SearchTiming {
 
 export type RequestTiming = Omit<SearchTiming, "searchTotalMs" | "searchCacheReadMs" | "searchCacheWriteMs" | "searchCacheHit">;
 
+/**
+ * Observes time spent waiting for a bounded planner pool and aggregate active
+ * task time. Active time includes cache access when a task does not go live.
+ */
+export interface ProviderPoolMetrics {
+  queueWaitMs: number;
+  executionMs: number;
+  maxQueueWaitMs: number;
+  maxInFlight: number;
+}
+
+export function emptyProviderPoolMetrics(): ProviderPoolMetrics {
+  return { queueWaitMs: 0, executionMs: 0, maxQueueWaitMs: 0, maxInFlight: 0 };
+}
+
+export function mergeProviderPoolMetrics(
+  left: ProviderPoolMetrics,
+  right: ProviderPoolMetrics,
+): ProviderPoolMetrics {
+  return {
+    queueWaitMs: Number((left.queueWaitMs + right.queueWaitMs).toFixed(2)),
+    executionMs: Number((left.executionMs + right.executionMs).toFixed(2)),
+    maxQueueWaitMs: Math.max(left.maxQueueWaitMs, right.maxQueueWaitMs),
+    maxInFlight: Math.max(left.maxInFlight, right.maxInFlight),
+  };
+}
+
 export function nowMs(): number {
   return performance.now();
 }
@@ -91,7 +126,9 @@ export function emptyRequestTiming(): RequestTiming {
     exploreSucceededRequests: 0, exploreFailedRequests: 0,
     stage1ProcessingMs: 0,
     cleanCalendarWallMs: 0, cleanCalendarRequests: 0, cleanCalendarLiveRequests: 0, cleanCalendarCacheHits: 0,
+    calendarQueueWaitMs: 0, calendarExecutionMs: 0, calendarMaxQueueWaitMs: 0, calendarMaxInFlight: 0,
     cleanDetailedWallMs: 0, cleanDetailedRequests: 0, cleanDetailedLiveRequests: 0, cleanDetailedCacheHits: 0,
+    detailedQueueWaitMs: 0, detailedExecutionMs: 0, detailedMaxQueueWaitMs: 0, detailedMaxInFlight: 0,
     fallbackTriggered: false,
     fallbackCalendarWallMs: 0, fallbackCalendarRequests: 0, fallbackCalendarLiveRequests: 0, fallbackCalendarCacheHits: 0,
     fallbackDetailedWallMs: 0, fallbackDetailedRequests: 0, fallbackDetailedLiveRequests: 0, fallbackDetailedCacheHits: 0,

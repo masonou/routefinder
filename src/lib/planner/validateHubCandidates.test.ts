@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { MAX_CALENDAR_CANDIDATES } from "../constants/planner.ts";
+import {
+  CALENDAR_VALIDATION_CONCURRENCY,
+  MAX_CALENDAR_CANDIDATES,
+} from "../constants/planner.ts";
 import type {
   FlightCalendarDay,
   FlightCalendarProvider,
@@ -40,6 +43,12 @@ function calendarProvider(
       return calendars[input.origin] ?? [];
     },
   };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => { resolve = resolvePromise; });
+  return { promise, resolve };
 }
 
 test("selects a mildly more expensive four-night onward option", async () => {
@@ -205,6 +214,38 @@ test("limits Calendar lookups and ranks validated hubs using price, detour, and 
   assert.equal(providerCalls, MAX_CALENDAR_CANDIDATES);
   assert.equal(result.topCandidates.length, 3);
   assert.equal(result.validatedCandidates[0]?.airportCode, "H00");
+});
+
+test("Calendar validation starts four requests and holds the fifth until a pool slot opens", async () => {
+  const candidates = Array.from({ length: CALENDAR_VALIDATION_CONCURRENCY + 1 }, (_, index) =>
+    candidate(`Q${index}`),
+  );
+  const started: string[] = [];
+  const firstWaveStarted = deferred<void>();
+  const fifthStarted = deferred<void>();
+  const gates = new Map(candidates.map((entry) => [entry.airportCode, deferred<void>()]));
+  const resultPromise = validateHubCandidates(
+    { candidates, destination: "DPS" },
+    {
+      async getFlightCalendar(input) {
+        started.push(input.origin);
+        if (started.length === CALENDAR_VALIDATION_CONCURRENCY) firstWaveStarted.resolve();
+        if (started.length === CALENDAR_VALIDATION_CONCURRENCY + 1) fifthStarted.resolve();
+        await gates.get(input.origin)?.promise;
+        return [{ departureDate: "2026-09-05", price: 100, currency: "EUR", hasFlights: true }];
+      },
+    },
+    { cache: null },
+  );
+
+  await firstWaveStarted.promise;
+  assert.equal(started.length, CALENDAR_VALIDATION_CONCURRENCY);
+  gates.get(candidates[0]!.airportCode)?.resolve();
+  await fifthStarted.promise;
+  assert.equal(started.length, CALENDAR_VALIDATION_CONCURRENCY + 1);
+  candidates.slice(1).forEach((entry) => gates.get(entry.airportCode)?.resolve());
+  const result = await resultPromise;
+  assert.equal(result.concurrency.maxInFlight, CALENDAR_VALIDATION_CONCURRENCY);
 });
 
 test("partial Calendar provider failures remain distinct from no-flight rejections", async () => {

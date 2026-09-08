@@ -79,6 +79,12 @@ function providerWith(routes: Record<string, FlightOffer[]>): FlightProvider {
   };
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => { resolve = resolvePromise; });
+  return { promise, resolve };
+}
+
 test("verifies a two-leg route and replaces Calendar estimates with detailed prices", async () => {
   const result = await verifyHubCandidates(
     { origin: "LCA", destination: "DPS", candidates: [hub("ATH")] },
@@ -96,6 +102,42 @@ test("verifies a two-leg route and replaces Calendar estimates with detailed pri
   assert.equal(route?.hubStayNights, 4);
   assert.equal(route?.calendarEstimatedTotal, 300);
   assert.equal(route?.calendarDifference, 155);
+});
+
+test("Detailed verification remains bounded at four concurrent provider requests", async () => {
+  const candidates = [hub("ATH"), hub("FCO"), hub("IST")];
+  const started: string[] = [];
+  const firstFourStarted = deferred<void>();
+  const laterRequestsStarted = deferred<void>();
+  const gates = new Map<string, ReturnType<typeof deferred<void>>>();
+  const provider: FlightProvider = {
+    name: "test",
+    async searchOneWay(input) {
+      const key = `${input.origin}-${input.destination}`;
+      const gate = gates.get(key) ?? deferred<void>();
+      gates.set(key, gate);
+      started.push(key);
+      if (started.length === 4) firstFourStarted.resolve();
+      if (started.length === 5) laterRequestsStarted.resolve();
+      await gate.promise;
+      return [offer(key, input.origin, input.destination, input.departureWindow.start, 100, 120)];
+    },
+  };
+  const resultPromise = verifyHubCandidates(
+    { origin: "LCA", destination: "DPS", candidates },
+    provider,
+    { cache: null },
+  );
+
+  await firstFourStarted.promise;
+  assert.equal(started.length, 4);
+  gates.get("LCA-ATH")?.resolve();
+  gates.get("ATH-DPS")?.resolve();
+  await laterRequestsStarted.promise;
+  assert.equal(started.length, 6, "the next candidate launches its two approved legs together");
+  for (const gate of gates.values()) gate.resolve();
+  const result = await resultPromise;
+  assert.equal(result.concurrency.maxInFlight, 4);
 });
 
 test("requires a nonstop first leg and permits onward routes with at most two stops", async () => {

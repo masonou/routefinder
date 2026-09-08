@@ -31,6 +31,11 @@ import {
   calculateItineraryStops,
   calculateItineraryTotalPrice,
 } from "../../types/itinerary.ts";
+import {
+  elapsedMs,
+  emptyProviderPoolMetrics,
+  type ProviderPoolMetrics,
+} from "../instrumentation/searchTiming.ts";
 
 export interface VerifiedRouteScoreBreakdown {
   price: number;
@@ -104,6 +109,7 @@ export interface VerifyHubCandidatesResult {
   rejected: DetailedVerificationRejection[];
   failures: DetailedVerificationFailure[];
   detailedLookups: DetailedVerificationLookup[];
+  concurrency: ProviderPoolMetrics;
 }
 
 interface CandidateSuccess {
@@ -437,10 +443,16 @@ export async function verifyHubCandidates(
   const cache = options.cache === undefined ? getFlightOffersCache() : options.cache;
   const warn = options.warn ?? console.warn;
   const candidates = input.candidates.slice(0, MAX_VERIFIED_HUBS);
+  const verificationStartedAt = performance.now();
+  const concurrency = emptyProviderPoolMetrics();
+  let providerInFlight = 0;
   const outcomes = await mapWithConcurrency(
     candidates,
     DETAILED_VERIFICATION_CONCURRENCY,
     async (hub): Promise<CandidateOutcome> => {
+      const queueWaitMs = elapsedMs(verificationStartedAt);
+      concurrency.queueWaitMs += queueWaitMs;
+      concurrency.maxQueueWaitMs = Math.max(concurrency.maxQueueWaitMs, queueWaitMs);
       try {
         const loadLeg = async (
           leg: "first" | "second",
@@ -448,33 +460,41 @@ export async function verifyHubCandidates(
           legDestination: string,
           departureDate: string,
         ) => {
-          const result = await runCachedFlightOffers({
-            key: buildFlightOffersCacheKey({
+          providerInFlight += 1;
+          concurrency.maxInFlight = Math.max(concurrency.maxInFlight, providerInFlight);
+          const executionStartedAt = performance.now();
+          try {
+            const result = await runCachedFlightOffers({
+              key: buildFlightOffersCacheKey({
+                origin: legOrigin,
+                destination: legDestination,
+                departureDate,
+                adults,
+              }),
+              cache,
+              load: () =>
+                provider.searchOneWay({
+                  origin: legOrigin,
+                  destination: legDestination,
+                  departureWindow: { start: departureDate, end: departureDate },
+                  adults,
+                }),
+              warn,
+            });
+            options.onDetailedOffers?.({
+              airportCode: hub.airportCode,
+              leg,
               origin: legOrigin,
               destination: legDestination,
               departureDate,
-              adults,
-            }),
-            cache,
-            load: () =>
-              provider.searchOneWay({
-                origin: legOrigin,
-                destination: legDestination,
-                departureWindow: { start: departureDate, end: departureDate },
-                adults,
-              }),
-            warn,
-          });
-          options.onDetailedOffers?.({
-            airportCode: hub.airportCode,
-            leg,
-            origin: legOrigin,
-            destination: legDestination,
-            departureDate,
-            offers: result.value,
-            cacheStatus: result.cacheStatus,
-          });
-          return { ...result, leg };
+              offers: result.value,
+              cacheStatus: result.cacheStatus,
+            });
+            return { ...result, leg };
+          } finally {
+            concurrency.executionMs += elapsedMs(executionStartedAt);
+            providerInFlight -= 1;
+          }
         };
 
         const [firstResult, secondResult] = await Promise.all([
@@ -594,5 +614,6 @@ export async function verifyHubCandidates(
           outcome.type === "success" || outcome.type === "rejected",
       )
       .flatMap((outcome) => outcome.lookups),
+    concurrency,
   };
 }

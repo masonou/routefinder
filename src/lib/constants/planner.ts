@@ -12,9 +12,14 @@ export const MAX_CALENDAR_CANDIDATES = 8;
 export const MAX_CONNECTING_FALLBACK_CALENDAR_CALLS = 4;
 export const MAX_DEPARTURE_VARIANTS_PER_HUB = 2;
 export const MAX_VALIDATED_HUBS = 3;
-export const CALENDAR_VALIDATION_CONCURRENCY = 3;
+// Calendar calls are independent after Stage 1 selects its fixed eight-candidate
+// budget. Four concurrent calls keeps provider work bounded while avoiding a
+// needless third wave for the common eight-request clean batch.
+export const CALENDAR_VALIDATION_CONCURRENCY = 4;
 export const MAX_VERIFIED_HUBS = 3;
 export const MAX_ONE_STOP_RESULTS = 3;
+// Each candidate verifies its two exact-date legs together, so this candidate
+// limit already permits four concurrent detailed provider requests.
 export const DETAILED_VERIFICATION_CONCURRENCY = 2;
 
 // Two-stop discovery is a bounded supplementary branch. These values deliberately

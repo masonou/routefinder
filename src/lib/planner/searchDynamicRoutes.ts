@@ -66,6 +66,8 @@ import type {
 import {
   countCacheStatuses,
   elapsedMs,
+  emptyProviderPoolMetrics,
+  mergeProviderPoolMetrics,
   emptyRequestTiming,
   nowMs,
   type RequestTiming,
@@ -169,6 +171,7 @@ export interface DetailedVerificationRun {
   rejected: DetailedVerificationRejection[];
   detailedLookups: DetailedVerificationLookup[];
   attemptedCandidates: number;
+  concurrency: ReturnType<typeof emptyProviderPoolMetrics>;
 }
 
 function candidateKey(candidate: Pick<ValidatedHubCandidate, "airportCode" | "firstLegDepartureDate">): string {
@@ -190,6 +193,7 @@ export async function verifyCandidatesUntilFilled(
   const detailedLookups: DetailedVerificationLookup[] = [];
   const attempted = new Set<string>();
   const verifiedHubs = new Set(initialVerifiedHubs);
+  let concurrency = emptyProviderPoolMetrics();
 
   while (verifiedRoutes.length < slots) {
     const batch: ValidatedHubCandidate[] = [];
@@ -223,6 +227,7 @@ export async function verifyCandidatesUntilFilled(
     failures.push(...result.failures);
     rejected.push(...result.rejected);
     detailedLookups.push(...result.detailedLookups);
+    concurrency = mergeProviderPoolMetrics(concurrency, result.concurrency);
     result.verifiedRoutes.forEach((route) =>
       verifiedHubs.add(route.hub.airportCode.trim().toUpperCase()),
     );
@@ -234,6 +239,7 @@ export async function verifyCandidatesUntilFilled(
     rejected,
     detailedLookups,
     attemptedCandidates: attempted.size,
+    concurrency,
   };
 }
 
@@ -497,6 +503,7 @@ export async function searchDynamicRoutePortfolio(
   );
   timing.cleanCalendarWallMs = elapsedMs(cleanCalendarStartedAt);
   Object.assign(timing, prefixCounts("cleanCalendar", countCacheStatuses(cleanValidation.calendarLookups)));
+  applyPoolMetrics(timing, "calendar", cleanValidation.concurrency);
   throwIfAllStageRequestsFailed(
     "calendar",
     Math.min(candidates.length, 8),
@@ -519,6 +526,7 @@ export async function searchDynamicRoutePortfolio(
   );
   timing.cleanDetailedWallMs = elapsedMs(cleanDetailedStartedAt);
   Object.assign(timing, prefixCounts("cleanDetailed", countCacheStatuses(cleanVerification.detailedLookups)));
+  applyPoolMetrics(timing, "detailed", cleanVerification.concurrency);
   const cleanVerifiedHubs = new Set(
     cleanVerification.verifiedRoutes.map((route) => route.hub.airportCode.trim().toUpperCase()),
   );
@@ -538,6 +546,7 @@ export async function searchDynamicRoutePortfolio(
   if (fallbackValidation) {
     timing.fallbackCalendarWallMs = elapsedMs(fallbackCalendarStartedAt);
     Object.assign(timing, prefixCounts("fallbackCalendar", countCacheStatuses(fallbackValidation.calendarLookups)));
+    applyPoolMetrics(timing, "calendar", fallbackValidation.concurrency);
   }
   const fallbackDetailedStartedAt = nowMs();
   const fallbackVerification = fallbackValidation
@@ -560,10 +569,12 @@ export async function searchDynamicRoutePortfolio(
       rejected: [],
       detailedLookups: [],
       attemptedCandidates: 0,
+      concurrency: emptyProviderPoolMetrics(),
     };
   if (fallbackValidation) {
     timing.fallbackDetailedWallMs = elapsedMs(fallbackDetailedStartedAt);
     Object.assign(timing, prefixCounts("fallbackDetailed", countCacheStatuses(fallbackVerification.detailedLookups)));
+    applyPoolMetrics(timing, "detailed", fallbackVerification.concurrency);
   }
 
   const verifiedRoutes = [
@@ -688,6 +699,25 @@ function prefixCounts(prefix: "cleanCalendar" | "cleanDetailed" | "fallbackCalen
     [`${prefix}LiveRequests`]: counts.liveRequests,
     [`${prefix}CacheHits`]: counts.cacheHits,
   } as Partial<RequestTiming>;
+}
+
+function applyPoolMetrics(
+  timing: RequestTiming,
+  stage: "calendar" | "detailed",
+  metrics: ReturnType<typeof emptyProviderPoolMetrics>,
+): RequestTiming {
+  if (stage === "calendar") {
+    timing.calendarQueueWaitMs += metrics.queueWaitMs;
+    timing.calendarExecutionMs += metrics.executionMs;
+    timing.calendarMaxQueueWaitMs = Math.max(timing.calendarMaxQueueWaitMs, metrics.maxQueueWaitMs);
+    timing.calendarMaxInFlight = Math.max(timing.calendarMaxInFlight, metrics.maxInFlight);
+  } else {
+    timing.detailedQueueWaitMs += metrics.queueWaitMs;
+    timing.detailedExecutionMs += metrics.executionMs;
+    timing.detailedMaxQueueWaitMs = Math.max(timing.detailedMaxQueueWaitMs, metrics.maxQueueWaitMs);
+    timing.detailedMaxInFlight = Math.max(timing.detailedMaxInFlight, metrics.maxInFlight);
+  }
+  return timing;
 }
 
 function applyDirectTiming(timing: RequestTiming, direct: DirectRouteTiming | undefined): RequestTiming {
