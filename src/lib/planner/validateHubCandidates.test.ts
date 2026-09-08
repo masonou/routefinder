@@ -10,7 +10,10 @@ import type {
   FlightCalendarProvider,
 } from "../providers/types.ts";
 import type { HubCandidate } from "./hubCandidates.ts";
-import { validateHubCandidates } from "./validateHubCandidates.ts";
+import {
+  mapWithConcurrency,
+  validateHubCandidates,
+} from "./validateHubCandidates.ts";
 
 function candidate(
   airportCode: string,
@@ -216,21 +219,19 @@ test("limits Calendar lookups and ranks validated hubs using price, detour, and 
   assert.equal(result.validatedCandidates[0]?.airportCode, "H00");
 });
 
-test("Calendar validation starts four requests and holds the fifth until a pool slot opens", async () => {
-  const candidates = Array.from({ length: CALENDAR_VALIDATION_CONCURRENCY + 1 }, (_, index) =>
+test("Calendar validation starts the entire fixed eight-candidate batch together", async () => {
+  const candidates = Array.from({ length: MAX_CALENDAR_CANDIDATES }, (_, index) =>
     candidate(`Q${index}`),
   );
   const started: string[] = [];
-  const firstWaveStarted = deferred<void>();
-  const fifthStarted = deferred<void>();
+  const fullBatchStarted = deferred<void>();
   const gates = new Map(candidates.map((entry) => [entry.airportCode, deferred<void>()]));
   const resultPromise = validateHubCandidates(
     { candidates, destination: "DPS" },
     {
       async getFlightCalendar(input) {
         started.push(input.origin);
-        if (started.length === CALENDAR_VALIDATION_CONCURRENCY) firstWaveStarted.resolve();
-        if (started.length === CALENDAR_VALIDATION_CONCURRENCY + 1) fifthStarted.resolve();
+        if (started.length === MAX_CALENDAR_CANDIDATES) fullBatchStarted.resolve();
         await gates.get(input.origin)?.promise;
         return [{ departureDate: "2026-09-05", price: 100, currency: "EUR", hasFlights: true }];
       },
@@ -238,14 +239,44 @@ test("Calendar validation starts four requests and holds the fifth until a pool 
     { cache: null },
   );
 
-  await firstWaveStarted.promise;
+  await fullBatchStarted.promise;
   assert.equal(started.length, CALENDAR_VALIDATION_CONCURRENCY);
-  gates.get(candidates[0]!.airportCode)?.resolve();
-  await fifthStarted.promise;
-  assert.equal(started.length, CALENDAR_VALIDATION_CONCURRENCY + 1);
-  candidates.slice(1).forEach((entry) => gates.get(entry.airportCode)?.resolve());
+  candidates.forEach((entry) => gates.get(entry.airportCode)?.resolve());
   const result = await resultPromise;
   assert.equal(result.concurrency.maxInFlight, CALENDAR_VALIDATION_CONCURRENCY);
+});
+
+test("Calendar pool holds the ninth task and releases a failed task's slot", async () => {
+  const tasks = Array.from({ length: CALENDAR_VALIDATION_CONCURRENCY + 1 }, (_, index) => `E${index}`);
+  const started: string[] = [];
+  const firstWaveStarted = deferred<void>();
+  const ninthStarted = deferred<void>();
+  const gates = new Map(tasks.map((task) => [task, deferred<void>()]));
+  const resultPromise = mapWithConcurrency(
+    tasks,
+    CALENDAR_VALIDATION_CONCURRENCY,
+    async (task) => {
+      started.push(task);
+      if (started.length === CALENDAR_VALIDATION_CONCURRENCY) firstWaveStarted.resolve();
+      if (started.length === CALENDAR_VALIDATION_CONCURRENCY + 1) ninthStarted.resolve();
+      try {
+        await gates.get(task)?.promise;
+        if (task === tasks[0]) throw new Error("upstream unavailable");
+        return { task, failed: false };
+      } catch {
+        return { task, failed: true };
+      }
+    },
+  );
+
+  await firstWaveStarted.promise;
+  assert.equal(started.length, CALENDAR_VALIDATION_CONCURRENCY);
+  gates.get(tasks[0]!)?.resolve();
+  await ninthStarted.promise;
+  assert.equal(started.length, CALENDAR_VALIDATION_CONCURRENCY + 1);
+  tasks.slice(1).forEach((task) => gates.get(task)?.resolve());
+  const result = await resultPromise;
+  assert.equal(result.find((entry) => entry.task === tasks[0])?.failed, true);
 });
 
 test("partial Calendar provider failures remain distinct from no-flight rejections", async () => {

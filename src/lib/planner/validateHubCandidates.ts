@@ -271,7 +271,7 @@ export function collapseValidatedHubVariants(
   return [...bestByHub.values()];
 }
 
-async function mapWithConcurrency<T, R>(
+export async function mapWithConcurrency<T, R>(
   values: T[],
   limit: number,
   mapper: (value: T) => Promise<R>,

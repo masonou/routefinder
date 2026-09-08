@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { MAX_VERIFIED_HUBS } from "../constants/planner.ts";
+import {
+  DETAILED_VERIFICATION_CONCURRENCY,
+  MAX_VERIFIED_HUBS,
+} from "../constants/planner.ts";
 import type { FlightProvider } from "../providers/types.ts";
 import type { FlightOffer } from "../../types/flight.ts";
 import type { ValidatedHubCandidate } from "./validateHubCandidates.ts";
@@ -104,11 +107,10 @@ test("verifies a two-leg route and replaces Calendar estimates with detailed pri
   assert.equal(route?.calendarDifference, 155);
 });
 
-test("Detailed verification remains bounded at four concurrent provider requests", async () => {
-  const candidates = [hub("ATH"), hub("FCO"), hub("IST")];
+test("Detailed verification starts all three selected candidates with six bounded provider requests", async () => {
+  const candidates = [hub("ATH"), hub("FCO"), hub("IST"), hub("DOH")];
   const started: string[] = [];
-  const firstFourStarted = deferred<void>();
-  const laterRequestsStarted = deferred<void>();
+  const allSelectedRequestsStarted = deferred<void>();
   const gates = new Map<string, ReturnType<typeof deferred<void>>>();
   const provider: FlightProvider = {
     name: "test",
@@ -117,8 +119,9 @@ test("Detailed verification remains bounded at four concurrent provider requests
       const gate = gates.get(key) ?? deferred<void>();
       gates.set(key, gate);
       started.push(key);
-      if (started.length === 4) firstFourStarted.resolve();
-      if (started.length === 5) laterRequestsStarted.resolve();
+      if (started.length === DETAILED_VERIFICATION_CONCURRENCY * 2) {
+        allSelectedRequestsStarted.resolve();
+      }
       await gate.promise;
       return [offer(key, input.origin, input.destination, input.departureWindow.start, 100, 120)];
     },
@@ -129,15 +132,12 @@ test("Detailed verification remains bounded at four concurrent provider requests
     { cache: null },
   );
 
-  await firstFourStarted.promise;
-  assert.equal(started.length, 4);
-  gates.get("LCA-ATH")?.resolve();
-  gates.get("ATH-DPS")?.resolve();
-  await laterRequestsStarted.promise;
-  assert.equal(started.length, 6, "the next candidate launches its two approved legs together");
+  await allSelectedRequestsStarted.promise;
+  assert.equal(started.length, DETAILED_VERIFICATION_CONCURRENCY * 2);
+  assert.ok(!started.includes("LCA-DOH"), "the fixed three-hub result budget excludes a fourth candidate");
   for (const gate of gates.values()) gate.resolve();
   const result = await resultPromise;
-  assert.equal(result.concurrency.maxInFlight, 4);
+  assert.equal(result.concurrency.maxInFlight, DETAILED_VERIFICATION_CONCURRENCY * 2);
 });
 
 test("requires a nonstop first leg and permits onward routes with at most two stops", async () => {
