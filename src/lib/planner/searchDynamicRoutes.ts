@@ -105,7 +105,7 @@ export interface FlexibleHubDiscoveryResult {
   candidates: HubCandidate[];
   calendarCandidates: HubCandidate[];
   failures: { departureDate: string; message: string }[];
-  timing: Pick<RequestTiming, "exploreWallMs" | "exploreRequests" | "exploreLiveRequests" | "exploreCacheHits" | "stage1ProcessingMs">;
+  timing: Pick<RequestTiming, "exploreWallMs" | "exploreRequests" | "exploreLiveRequests" | "exploreCacheHits" | "exploreSucceededRequests" | "exploreFailedRequests" | "stage1ProcessingMs">;
 }
 
 export function toDynamicItinerary(route: VerifiedHubRoute): Itinerary {
@@ -267,8 +267,9 @@ export async function discoverFlexibleHubCandidates(
       stage1ProcessingMs?: number;
       cause?: ReturnType<typeof normalizeSearchApiError>;
     }> => {
+      let result: Awaited<ReturnType<typeof runCachedDirectDestinations>>;
       try {
-        const result = await runCachedDirectDestinations({
+        result = await runCachedDirectDestinations({
           key: buildDirectDestinationsCacheKey({
             origin: input.origin,
             departureDate,
@@ -281,26 +282,29 @@ export async function discoverFlexibleHubCandidates(
             }),
           warn,
         });
-        const stage1StartedAt = nowMs();
-        const candidates = await generateHubCandidates(
-          { origin: input.origin, destination: input.destination, departureDate },
-          { getDirectDestinations: async () => result.value },
-        );
-        return {
-          departureDate,
-          directDestinationCount: result.value.length,
-          candidateCount: candidates.length,
-          hubCodes: [...new Set(candidates.map((candidate) => candidate.airportCode))],
-          cacheStatus: result.cacheStatus,
-          candidates,
-          stage1ProcessingMs: elapsedMs(stage1StartedAt),
-        };
       } catch (error) {
         const cause = normalizeSearchApiError(error);
         const message = cause.message;
         warn(`Travel Explore failed for ${departureDate}: ${message}`);
         return { departureDate, error: message, cause };
       }
+      // Only provider/cache lookup failures are recoverable here. Candidate
+      // generation remains outside the boundary so programming errors still
+      // surface instead of being mistaken for degraded provider coverage.
+      const stage1StartedAt = nowMs();
+      const candidates = await generateHubCandidates(
+        { origin: input.origin, destination: input.destination, departureDate },
+        { getDirectDestinations: async () => result.value },
+      );
+      return {
+        departureDate,
+        directDestinationCount: result.value.length,
+        candidateCount: candidates.length,
+        hubCodes: [...new Set(candidates.map((candidate) => candidate.airportCode))],
+        cacheStatus: result.cacheStatus,
+        candidates,
+        stage1ProcessingMs: elapsedMs(stage1StartedAt),
+      };
     }),
   );
   const exploreWallMs = elapsedMs(exploreStartedAt);
@@ -324,9 +328,16 @@ export async function discoverFlexibleHubCandidates(
     (sum, result) => sum + ("stage1ProcessingMs" in result ? result.stage1ProcessingMs ?? 0 : 0), 0,
   ).toFixed(2));
   const candidates = exploreResults.flatMap((result) => ("candidates" in result ? result.candidates ?? [] : []));
-  const exploreCounts = countCacheStatuses(
+  const successfulExploreCounts = countCacheStatuses(
     exploreResults.flatMap((result) => result.cacheStatus ? [{ cacheStatus: result.cacheStatus }] : []),
   );
+  // A failed lookup necessarily reached the provider after a cache miss, so
+  // attempts remain visible in request and live-request accounting.
+  const exploreCounts = {
+    requests: departureDates.length,
+    cacheHits: successfulExploreCounts.cacheHits,
+    liveRequests: departureDates.length - successfulExploreCounts.cacheHits,
+  };
   return {
     departureDates,
     exploreResults: exploreResults.map((result) => ({
@@ -349,6 +360,8 @@ export async function discoverFlexibleHubCandidates(
       exploreRequests: exploreCounts.requests,
       exploreLiveRequests: exploreCounts.liveRequests,
       exploreCacheHits: exploreCounts.cacheHits,
+      exploreSucceededRequests: departureDates.length - failures.length,
+      exploreFailedRequests: failures.length,
       stage1ProcessingMs,
     },
   };
@@ -357,12 +370,13 @@ export async function discoverFlexibleHubCandidates(
 async function discoverReverseDestinationNetwork(
   input: Pick<TripRequest, "destination"> & { earliestDeparture: string },
   dependencies: Pick<DynamicSearchDependencies, "directDestinationsProvider" | "directDestinationsCache" | "warn">,
-): Promise<{ network: Set<string>; failures: number; timing: Pick<RequestTiming, "twoStopReverseExploreWallMs" | "twoStopReverseExploreRequests" | "twoStopReverseExploreLiveRequests" | "twoStopReverseExploreCacheHits"> }> {
+): Promise<{ network: Set<string>; failures: number; timing: Pick<RequestTiming, "twoStopReverseExploreWallMs" | "twoStopReverseExploreRequests" | "twoStopReverseExploreLiveRequests" | "twoStopReverseExploreCacheHits" | "twoStopReverseExploreSucceededRequests" | "twoStopReverseExploreFailedRequests"> }> {
   const provider = dependencies.directDestinationsProvider ?? searchApiDirectDestinationsProvider;
   const cache = dependencies.directDestinationsCache === undefined ? getDirectDestinationsCache() : dependencies.directDestinationsCache;
   const warn = dependencies.warn ?? console.warn;
   const startedAt = nowMs();
-  const results = await Promise.all(getInitialDepartureDates(input.earliestDeparture).map(async (departureDate) => {
+  const departureDates = getInitialDepartureDates(input.earliestDeparture);
+  const results = await Promise.all(departureDates.map(async (departureDate) => {
     try {
       return await runCachedDirectDestinations({
         key: buildDirectDestinationsCacheKey({ origin: input.destination, departureDate }),
@@ -371,19 +385,28 @@ async function discoverReverseDestinationNetwork(
         warn,
       });
     } catch (error) {
-      warn(`Reverse Explore failed for ${departureDate}: ${error instanceof Error ? error.message : "Unknown error."}`);
+      const cause = normalizeSearchApiError(error);
+      warn(`Reverse Explore failed for ${input.destination} on ${departureDate}${cause.status === undefined ? "" : ` (status ${cause.status})`}: ${cause.message}`);
       return undefined;
     }
   }));
-  const counts = countCacheStatuses(results.flatMap((result) => result ? [{ cacheStatus: result.cacheStatus }] : []));
+  const successfulCounts = countCacheStatuses(results.flatMap((result) => result ? [{ cacheStatus: result.cacheStatus }] : []));
+  const failures = results.filter((result) => !result).length;
+  const counts = {
+    requests: departureDates.length,
+    cacheHits: successfulCounts.cacheHits,
+    liveRequests: departureDates.length - successfulCounts.cacheHits,
+  };
   return {
     network: new Set(results.flatMap((result) => result?.value.map((entry) => entry.airportCode.trim().toUpperCase()) ?? [])),
-    failures: results.filter((result) => !result).length,
+    failures,
     timing: {
       twoStopReverseExploreWallMs: elapsedMs(startedAt),
       twoStopReverseExploreRequests: counts.requests,
       twoStopReverseExploreLiveRequests: counts.liveRequests,
       twoStopReverseExploreCacheHits: counts.cacheHits,
+      twoStopReverseExploreSucceededRequests: departureDates.length - failures,
+      twoStopReverseExploreFailedRequests: failures,
     },
   };
 }

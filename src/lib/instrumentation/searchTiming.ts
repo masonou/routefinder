@@ -13,6 +13,8 @@ export interface SearchTiming {
   exploreRequests: number;
   exploreLiveRequests: number;
   exploreCacheHits: number;
+  exploreSucceededRequests: number;
+  exploreFailedRequests: number;
   stage1ProcessingMs: number;
   cleanCalendarWallMs: number;
   cleanCalendarRequests: number;
@@ -46,6 +48,8 @@ export interface SearchTiming {
   twoStopReverseExploreRequests: number;
   twoStopReverseExploreLiveRequests: number;
   twoStopReverseExploreCacheHits: number;
+  twoStopReverseExploreSucceededRequests: number;
+  twoStopReverseExploreFailedRequests: number;
   twoStopExploreWallMs: number;
   twoStopExploreRequests: number;
   twoStopExploreLiveRequests: number;
@@ -81,6 +85,7 @@ export function countCacheStatuses(lookups: Array<{ cacheStatus: "HIT" | "MISS" 
 export function emptyRequestTiming(): RequestTiming {
   return {
     exploreWallMs: 0, exploreRequests: 0, exploreLiveRequests: 0, exploreCacheHits: 0,
+    exploreSucceededRequests: 0, exploreFailedRequests: 0,
     stage1ProcessingMs: 0,
     cleanCalendarWallMs: 0, cleanCalendarRequests: 0, cleanCalendarLiveRequests: 0, cleanCalendarCacheHits: 0,
     cleanDetailedWallMs: 0, cleanDetailedRequests: 0, cleanDetailedLiveRequests: 0, cleanDetailedCacheHits: 0,
@@ -91,6 +96,7 @@ export function emptyRequestTiming(): RequestTiming {
     directDetailedMs: 0, directDetailedLiveRequests: 0, directDetailedCacheHits: 0, directTotalMs: 0,
     twoStopTriggered: false, twoStopForced: false, twoStopTotalMs: 0, twoStopH1SelectionMs: 0,
     twoStopReverseExploreWallMs: 0, twoStopReverseExploreRequests: 0, twoStopReverseExploreLiveRequests: 0, twoStopReverseExploreCacheHits: 0,
+    twoStopReverseExploreSucceededRequests: 0, twoStopReverseExploreFailedRequests: 0,
     twoStopExploreWallMs: 0, twoStopExploreRequests: 0, twoStopExploreLiveRequests: 0, twoStopExploreCacheHits: 0,
     twoStopPairCandidateProcessingMs: 0,
     twoStopCalendarWallMs: 0, twoStopCalendarRequests: 0, twoStopCalendarLiveRequests: 0, twoStopCalendarCacheHits: 0,

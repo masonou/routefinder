@@ -5,6 +5,7 @@ import {
   buildDirectDestinationsCacheKey,
   getDirectDestinationsCache,
   runCachedDirectDestinations,
+  type CachedDirectDestinationsResult,
 } from "../src/lib/cache/directDestinationsCache.ts";
 import {
   DEPARTURE_FLEX_DAYS,
@@ -62,6 +63,16 @@ const forceTwoStop = optionArgs.includes("--force-two-stop");
 
 interface DiagnosticCandidate extends HubCandidate {
   scoreBreakdown: ReturnType<typeof calculateHubCandidateScoreBreakdown>;
+}
+
+type DirectExploreOutcome =
+  | { date: string; result: CachedDirectDestinationsResult }
+  | { date: string; error: string };
+
+function isDirectExploreSuccess(
+  outcome: DirectExploreOutcome,
+): outcome is Extract<DirectExploreOutcome, { result: CachedDirectDestinationsResult }> {
+  return "result" in outcome;
 }
 
 function compare(left: HubCandidate, right: HubCandidate): number {
@@ -248,15 +259,27 @@ async function run(): Promise<void> {
   const dates = enumerateDateWindow({ start: departureDate, end: addCalendarDays(departureDate, DEPARTURE_FLEX_DAYS) });
   const cache = getDirectDestinationsCache();
   const exploreStartedAt = performance.now();
-  const explore = await Promise.all(dates.map(async (date) => {
-    const result = await runCachedDirectDestinations({
-      key: buildDirectDestinationsCacheKey({ origin, departureDate: date }),
-      cache,
-      load: () => searchApiDirectDestinationsProvider.getDirectDestinations({ origin, departureDate: date }),
-    });
-    return { date, ...result };
+  const exploreOutcomes = await Promise.all(dates.map(async (date): Promise<DirectExploreOutcome> => {
+    try {
+      const result = await runCachedDirectDestinations({
+        key: buildDirectDestinationsCacheKey({ origin, departureDate: date }),
+        cache,
+        load: () => searchApiDirectDestinationsProvider.getDirectDestinations({ origin, departureDate: date }),
+      });
+      return { date, result };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error.";
+      console.warn(`Travel Explore failed for ${origin} on ${date}: ${message}`);
+      return { date, error: message };
+    }
   }));
   const exploreWallMs = performance.now() - exploreStartedAt;
+  const explore = exploreOutcomes.flatMap((outcome) =>
+    isDirectExploreSuccess(outcome) ? [{ date: outcome.date, ...outcome.result }] : [],
+  );
+  if (explore.length === 0) {
+    throw new Error("Travel Explore failed for every departure date.");
+  }
   const raw = explore.flatMap((result) => result.value).map(makeCandidate)
     .filter((candidate): candidate is DiagnosticCandidate => candidate !== undefined);
   const geography = raw.filter((candidate) => candidate.detourRatio <= MAX_HUB_DETOUR_RATIO).sort(compare);
@@ -274,7 +297,12 @@ async function run(): Promise<void> {
 
   console.log(`\n${"=".repeat(54)}\n${origin} → ${destination} · Stage 1 diagnostic\n${"=".repeat(54)}`);
   console.log(`Rules: detour <= ${MAX_HUB_DETOUR_RATIO}; ${MAX_HUB_CANDIDATES} candidates per Explore date; ${MAX_DEPARTURE_VARIANTS_PER_HUB} variants per hub; top ${MAX_CALENDAR_CANDIDATES} to Calendar.`);
-  table("EXPLORE BY DATE", explore.map((result) => ({ exploreDate: result.date, directDestinations: result.value.length, cache: result.cacheStatus })));
+  table("EXPLORE BY DATE", exploreOutcomes.map((outcome) => ({
+    exploreDate: outcome.date,
+    directDestinations: isDirectExploreSuccess(outcome) ? outcome.result.value.length : "",
+    cache: isDirectExploreSuccess(outcome) ? outcome.result.cacheStatus : "",
+    error: isDirectExploreSuccess(outcome) ? "" : outcome.error,
+  })));
   console.log(`Explore aggregate: ${explore.reduce((sum, result) => sum + result.value.length, 0)} raw results; ${uniqueHubs(raw)} unique airports; ${new Set(raw.map(key)).size} unique airport/date variants.`);
   const source = findAirportByCode(origin);
   const target = findAirportByCode(destination);
@@ -442,17 +470,38 @@ async function run(): Promise<void> {
     console.log(`force-two-stop: ${forcePortfolioFull ? "enabled (portfolio_full bypass only)" : "ignored (route remains protected or automatic discovery already applies)"}`);
   }
   const twoStopTarget = forcePortfolioFull ? MAX_TWO_STOP_RESULTS : twoStopEligibility.targetResults;
-  const reverseExplore = shouldRunTwoStop
-    ? await Promise.all(dates.map(async (date) => {
-      const result = await runCachedDirectDestinations({
-        key: buildDirectDestinationsCacheKey({ origin: destination, departureDate: date }),
-        cache,
-        load: () => searchApiDirectDestinationsProvider.getDirectDestinations({ origin: destination, departureDate: date }),
-      });
-      return { date, ...result };
+  const reverseExploreOutcomes = shouldRunTwoStop
+    ? await Promise.all(dates.map(async (date): Promise<DirectExploreOutcome> => {
+      try {
+        const result = await runCachedDirectDestinations({
+          key: buildDirectDestinationsCacheKey({ origin: destination, departureDate: date }),
+          cache,
+          load: () => searchApiDirectDestinationsProvider.getDirectDestinations({ origin: destination, departureDate: date }),
+        });
+        return { date, result };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Unknown error.";
+        console.warn(`Reverse Explore failed for ${destination} on ${date}: ${message}`);
+        return { date, error: message };
+      }
     }))
     : [];
+  const reverseExplore = reverseExploreOutcomes.flatMap((outcome) =>
+    isDirectExploreSuccess(outcome) ? [{ date: outcome.date, ...outcome.result }] : [],
+  );
   const reverseNetwork = new Set(reverseExplore.flatMap((result) => result.value.map((entry) => entry.airportCode.trim().toUpperCase())));
+  if (shouldRunTwoStop) {
+    const reverseSucceeded = reverseExplore.length;
+    const reverseFailed = reverseExploreOutcomes.length - reverseSucceeded;
+    console.log("\nREVERSE DESTINATION NETWORK");
+    console.log(`dates attempted: ${reverseExploreOutcomes.length}\ndates succeeded: ${reverseSucceeded}\ndates failed: ${reverseFailed}\ncoverage: ${reverseSucceeded}/${reverseExploreOutcomes.length}\nunique reverse airports: ${reverseNetwork.size}`);
+    table("REVERSE EXPLORE BY DATE", reverseExploreOutcomes.map((outcome) => ({
+      exploreDate: outcome.date,
+      directDestinations: isDirectExploreSuccess(outcome) ? outcome.result.value.length : "",
+      cache: isDirectExploreSuccess(outcome) ? outcome.result.cacheStatus : "",
+      error: isDirectExploreSuccess(outcome) ? "" : outcome.error,
+    })));
+  }
   const twoStop = shouldRunTwoStop
     ? await discoverTwoStopRoutes(
       {
@@ -512,6 +561,7 @@ async function run(): Promise<void> {
   console.log(`direct: not evaluated by hubs:debug\none-stop clean: ${oneStopPortfolio.clean.length}\none-stop connecting: ${oneStopPortfolio.connecting.length}\none-stop total: ${finalAdventures.length}\ntwo-stop: ${twoStop?.itineraries.length ?? 0}\ntotal itineraries returned: ${finalAdventures.length + (twoStop?.itineraries.length ?? 0)}`);
   console.log(`TWO-STOP DISCOVERY\neligible: ${shouldRunTwoStop ? "yes" : "no"}\nverified: ${twoStop?.itineraries.length ?? 0} / ${twoStopTarget} target`);
   const exploreHits = explore.filter((result) => result.cacheStatus === "HIT").length;
+  const exploreLive = exploreOutcomes.length - exploreHits;
   const calendarLookups = [
     ...cleanValidation.calendarLookups,
     ...(fallbackValidation?.calendarLookups ?? []),
@@ -526,14 +576,15 @@ async function run(): Promise<void> {
   const detailedMisses = detailedLookups.filter((lookup) => lookup.cacheStatus === "MISS").length;
   console.log("\nAPI-CALL ACCOUNTING");
   console.log(`Explore wall: ${(exploreWallMs / 1_000).toFixed(2)}s; Clean Calendar wall: ${(cleanCalendarWallMs / 1_000).toFixed(2)}s; Clean Detailed wall: ${(cleanDetailedWallMs / 1_000).toFixed(2)}s.`);
-  console.log(`Live SearchAPI calls: Explore ${explore.length - exploreHits}; Calendar ${calendarMisses} (${calendarHits} cache hits; failures have no cache status); Detailed ${detailedMisses} (${detailedHits} cache hits); total ${explore.length - exploreHits + calendarMisses + detailedMisses}.`);
+  console.log(`Live SearchAPI calls: Explore ${exploreLive}; Calendar ${calendarMisses} (${calendarHits} cache hits; failures have no cache status); Detailed ${detailedMisses} (${detailedHits} cache hits); total ${exploreLive + calendarMisses + detailedMisses}.`);
   if (twoStop) {
     const reverseHits = reverseExplore.filter((result) => result.cacheStatus === "HIT").length;
+    const reverseLive = reverseExploreOutcomes.length - reverseHits;
     const twoStopLive = twoStop.api.h1ExploreCalls + twoStop.api.firstLegDetailedCalls +
       twoStop.api.middleCalendarCalls + twoStop.api.middleDetailedCalls +
       twoStop.api.finalCalendarCalls + twoStop.api.finalDetailedCalls;
-    console.log(`Additional two-stop calls: Reverse Explore ${reverseExplore.length - reverseHits}; H1 Explore ${twoStop.api.h1ExploreCalls}; first-leg detailed ${twoStop.api.firstLegDetailedCalls}; H1→H2 Calendar ${twoStop.api.middleCalendarCalls}; H1→H2 detailed ${twoStop.api.middleDetailedCalls}; H2→destination Calendar ${twoStop.api.finalCalendarCalls}; H2→destination detailed ${twoStop.api.finalDetailedCalls}; cache hits ${twoStop.api.cacheHits + reverseHits}; total ${twoStopLive + reverseExplore.length - reverseHits}.`);
-    console.log(`Total live calls: ${explore.length - exploreHits + calendarMisses + detailedMisses + twoStopLive + reverseExplore.length - reverseHits}.`);
+    console.log(`Additional two-stop calls: Reverse Explore ${reverseLive}; H1 Explore ${twoStop.api.h1ExploreCalls}; first-leg detailed ${twoStop.api.firstLegDetailedCalls}; H1→H2 Calendar ${twoStop.api.middleCalendarCalls}; H1→H2 detailed ${twoStop.api.middleDetailedCalls}; H2→destination Calendar ${twoStop.api.finalCalendarCalls}; H2→destination detailed ${twoStop.api.finalDetailedCalls}; cache hits ${twoStop.api.cacheHits + reverseHits}; total ${twoStopLive + reverseLive}.`);
+    console.log(`Total live calls: ${exploreLive + calendarMisses + detailedMisses + twoStopLive + reverseLive}.`);
     console.log(`Two-stop wall: ${(twoStop.timing.twoStopExploreWallMs / 1_000).toFixed(2)}s H1 Explore; ${(twoStop.timing.twoStopCalendarWallMs / 1_000).toFixed(2)}s Calendar; ${(twoStop.timing.twoStopDetailedWallMs / 1_000).toFixed(2)}s Detailed.`);
   }
   console.log(`Wall-clock diagnostic search: ${((performance.now() - searchStartedAt) / 1_000).toFixed(2)}s.`);

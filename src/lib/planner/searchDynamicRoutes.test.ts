@@ -589,7 +589,67 @@ test("partial Explore failures keep candidates from successful departure dates",
   assert.equal(discovery.failures.length, 1);
   assert.equal(discovery.failures[0]?.departureDate, "2026-09-02");
   assert.equal(discovery.calendarCandidates.length, 4);
+  assert.deepEqual(
+    {
+      attempted: discovery.timing.exploreRequests,
+      succeeded: discovery.timing.exploreSucceededRequests,
+      failed: discovery.timing.exploreFailedRequests,
+      live: discovery.timing.exploreLiveRequests,
+    },
+    { attempted: 4, succeeded: 3, failed: 1, live: 4 },
+  );
   assert.match(warnings[0] ?? "", /Travel Explore failed for 2026-09-02/);
+});
+
+async function runReverseExploreFailureScenario(failedReverseDates: ReadonlySet<string>) {
+  let h1ExploreCalls = 0;
+  const portfolio = await searchDynamicRoutePortfolio(request, { forceTwoStop: true }, {
+    directDestinationsCache: null,
+    flightCalendarCache: null,
+    flightOffersCache: null,
+    directDestinationsProvider: {
+      async getDirectDestinations(input) {
+        if (input.origin === request.destination && failedReverseDates.has(input.departureDate)) {
+          throw new Error("Reverse Explore timed out");
+        }
+        if (input.origin !== request.origin && input.origin !== request.destination) h1ExploreCalls += 1;
+        return fallbackScenarioHubs.map((hub) => ({
+          ...hub,
+          outboundDate: input.departureDate,
+        }));
+      },
+    },
+    flightCalendarProvider: calendarProvider(),
+    flightProvider: flightProvider(),
+  });
+
+  return { portfolio, h1ExploreCalls };
+}
+
+test("partial Reverse Explore failures retain successful coverage and continue two-stop discovery", async () => {
+  const { portfolio, h1ExploreCalls } = await runReverseExploreFailureScenario(
+    new Set(["2026-09-03"]),
+  );
+  const timing = portfolio.timing!;
+
+  assert.equal(timing.twoStopReverseExploreRequests, 4);
+  assert.equal(timing.twoStopReverseExploreSucceededRequests, 3);
+  assert.equal(timing.twoStopReverseExploreFailedRequests, 1);
+  assert.equal(timing.twoStopReverseExploreLiveRequests, 4);
+  assert.ok(h1ExploreCalls > 0, "surviving reverse evidence must not stop H1/H2 discovery");
+});
+
+test("all Reverse Explore failures leave H1-based two-stop discovery available", async () => {
+  const { portfolio, h1ExploreCalls } = await runReverseExploreFailureScenario(
+    new Set(getInitialDepartureDates("2026-09-01")),
+  );
+  const timing = portfolio.timing!;
+
+  assert.equal(timing.twoStopReverseExploreRequests, 4);
+  assert.equal(timing.twoStopReverseExploreSucceededRequests, 0);
+  assert.equal(timing.twoStopReverseExploreFailedRequests, 4);
+  assert.equal(timing.twoStopReverseExploreLiveRequests, 4);
+  assert.ok(h1ExploreCalls > 0, "an unavailable reverse network must not abort H1/H2 discovery");
 });
 
 test("overlapping flexible searches reuse cached Explore days independently", async () => {
