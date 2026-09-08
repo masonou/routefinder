@@ -44,6 +44,7 @@ export interface SearchTiming {
   twoStopForced: boolean;
   twoStopTotalMs: number;
   twoStopH1SelectionMs: number;
+  twoStopNetworkDiscoveryWallMs: number;
   twoStopReverseExploreWallMs: number;
   twoStopReverseExploreRequests: number;
   twoStopReverseExploreLiveRequests: number;
@@ -55,6 +56,8 @@ export interface SearchTiming {
   twoStopExploreLiveRequests: number;
   twoStopExploreCacheHits: number;
   twoStopPairCandidateProcessingMs: number;
+  twoStopPairValidationWallMs: number;
+  twoStopPairValidationWaves: number;
   twoStopCalendarWallMs: number;
   twoStopCalendarRequests: number;
   twoStopCalendarLiveRequests: number;
@@ -95,10 +98,11 @@ export function emptyRequestTiming(): RequestTiming {
     directCalendarMs: 0, directCalendarLiveRequests: 0, directCalendarCacheHits: 0,
     directDetailedMs: 0, directDetailedLiveRequests: 0, directDetailedCacheHits: 0, directTotalMs: 0,
     twoStopTriggered: false, twoStopForced: false, twoStopTotalMs: 0, twoStopH1SelectionMs: 0,
+    twoStopNetworkDiscoveryWallMs: 0,
     twoStopReverseExploreWallMs: 0, twoStopReverseExploreRequests: 0, twoStopReverseExploreLiveRequests: 0, twoStopReverseExploreCacheHits: 0,
     twoStopReverseExploreSucceededRequests: 0, twoStopReverseExploreFailedRequests: 0,
     twoStopExploreWallMs: 0, twoStopExploreRequests: 0, twoStopExploreLiveRequests: 0, twoStopExploreCacheHits: 0,
-    twoStopPairCandidateProcessingMs: 0,
+    twoStopPairCandidateProcessingMs: 0, twoStopPairValidationWallMs: 0, twoStopPairValidationWaves: 0,
     twoStopCalendarWallMs: 0, twoStopCalendarRequests: 0, twoStopCalendarLiveRequests: 0, twoStopCalendarCacheHits: 0,
     twoStopDetailedWallMs: 0, twoStopDetailedRequests: 0, twoStopDetailedLiveRequests: 0, twoStopDetailedCacheHits: 0,
     providerLiveRequests: 0, providerCacheHits: 0,

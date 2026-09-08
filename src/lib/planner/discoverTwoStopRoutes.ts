@@ -155,7 +155,7 @@ export interface DiscoverTwoStopRoutesInput {
   adults: number;
   h1Candidates: TwoStopH1Candidate[];
   observedConnections: Map<string, ObservedConnectionAirport[]>;
-  reverseDestinationNetwork?: ReadonlySet<string>;
+  reverseDestinationNetwork?: ReadonlySet<string> | Promise<ReadonlySet<string>>;
   targetResults: number;
 }
 
@@ -185,7 +185,7 @@ export interface TwoStopDiscoveryResult {
   /** Number of H1 branches that ended in a provider/cache technical failure. */
   technicalFailureCount: number;
   api: TwoStopApiAccounting;
-  timing: Pick<RequestTiming, "twoStopH1SelectionMs" | "twoStopExploreWallMs" | "twoStopExploreRequests" | "twoStopExploreLiveRequests" | "twoStopExploreCacheHits" | "twoStopPairCandidateProcessingMs" | "twoStopCalendarWallMs" | "twoStopCalendarRequests" | "twoStopCalendarLiveRequests" | "twoStopCalendarCacheHits" | "twoStopDetailedWallMs" | "twoStopDetailedRequests" | "twoStopDetailedLiveRequests" | "twoStopDetailedCacheHits">;
+  timing: Pick<RequestTiming, "twoStopH1SelectionMs" | "twoStopNetworkDiscoveryWallMs" | "twoStopExploreWallMs" | "twoStopExploreRequests" | "twoStopExploreLiveRequests" | "twoStopExploreCacheHits" | "twoStopPairCandidateProcessingMs" | "twoStopPairValidationWallMs" | "twoStopPairValidationWaves" | "twoStopCalendarWallMs" | "twoStopCalendarRequests" | "twoStopCalendarLiveRequests" | "twoStopCalendarCacheHits" | "twoStopDetailedWallMs" | "twoStopDetailedRequests" | "twoStopDetailedLiveRequests" | "twoStopDetailedCacheHits">;
 }
 
 interface VerifiedTwoStopRoute {
@@ -410,6 +410,7 @@ export async function discoverTwoStopRoutes(
   input: DiscoverTwoStopRoutesInput,
   dependencies: DiscoverTwoStopRoutesDependencies,
 ): Promise<TwoStopDiscoveryResult> {
+  const networkDiscoveryStartedAt = nowMs();
   const h1SelectionStartedAt = nowMs();
   const h1Candidates = h1Selection(input.h1Candidates);
   const twoStopH1SelectionMs = elapsedMs(h1SelectionStartedAt);
@@ -491,24 +492,28 @@ export async function discoverTwoStopRoutes(
     } catch (error) { return { ...entry, error }; }
   }));
   twoStopExploreWallMs += elapsedMs(h1ExploreStartedAt);
+  // Reverse Explore is an independent signal. Await it only when H2 ranking
+  // needs the set, allowing its D..D+3 requests to overlap first-leg and H1
+  // Explore work above.
+  const reverseDestinationNetwork = await input.reverseDestinationNetwork;
   const preparedH1: PreparedH1[] = [];
   for (const outcome of exploreOutcomes) {
     if ("error" in outcome) { recordH1Failure(outcome.h1, outcome.error); continue; }
     recordStageCache("explore", outcome.result.cacheStatus, "h1ExploreCalls");
     const pairProcessingStartedAt = nowMs();
-    const candidates = rankTwoStopH2Candidates({ origin, h1: outcome.h1, destination, exploreDestinations: outcome.result.value, reverseDestinationNetwork: input.reverseDestinationNetwork, observedConnections: input.observedConnections.get(outcome.h1.airportCode.trim().toUpperCase()) ?? [] });
+    const candidates = rankTwoStopH2Candidates({ origin, h1: outcome.h1, destination, exploreDestinations: outcome.result.value, reverseDestinationNetwork, observedConnections: input.observedConnections.get(outcome.h1.airportCode.trim().toUpperCase()) ?? [] });
     twoStopPairCandidateProcessingMs += elapsedMs(pairProcessingStartedAt);
     h2Candidates.push({ h1: outcome.h1.airportCode, candidates });
     preparedH1.push({ h1: outcome.h1, firstLeg: outcome.firstLeg, h1ArrivalDate: outcome.h1ArrivalDate, candidates });
   }
   const preparedByH1 = new Map(preparedH1.map((entry) => [entry.h1.airportCode, entry]));
   const pairSchedule = buildRoundRobinPairSchedule(preparedH1.map((entry) => ({ h1: entry.h1, candidates: entry.candidates })));
-  const initialH1Attempts = new Set(pairSchedule.map((entry) => entry.h1.airportCode)).size;
-  for (const { h1, h2 } of pairSchedule) {
-    if (verified.length >= input.targetResults && attemptedPairs >= initialH1Attempts) break;
+  const twoStopNetworkDiscoveryWallMs = elapsedMs(networkDiscoveryStartedAt);
+  const pairValidationStartedAt = nowMs();
+  let twoStopPairValidationWaves = 0;
+  const validatePair = async ({ h1, h2 }: { h1: TwoStopH1Candidate; h2: TwoStopH2Candidate }): Promise<VerifiedTwoStopRoute | undefined> => {
     const prepared = preparedByH1.get(h1.airportCode);
-    if (!prepared) continue;
-    attemptedPairs += 1;
+    if (!prepared) return undefined;
     try {
       const middleCalendarStartedAt = nowMs();
       const middleCalendar = await runCachedFlightCalendar({
@@ -518,7 +523,7 @@ export async function discoverTwoStopRoutes(
       twoStopCalendarWallMs += elapsedMs(middleCalendarStartedAt);
       recordStageCache("calendar", middleCalendar.cacheStatus, "middleCalendarCalls");
       const middleDate = selectCalendarDate(prepared.h1ArrivalDate, middleCalendar.value);
-      if (!middleDate) continue;
+      if (!middleDate) return undefined;
       const middleDetailedStartedAt = nowMs();
       const middleResult = await runCachedFlightOffers({
         key: buildFlightOffersCacheKey({ origin: h1.airportCode, destination: h2.airportCode, departureDate: middleDate.departureDate, adults: input.adults }), cache: flightOffersCache,
@@ -528,7 +533,7 @@ export async function discoverTwoStopRoutes(
       recordStageCache("detailed", middleResult.cacheStatus, "middleDetailedCalls");
       const middleLeg = selectNonstopOffer(middleResult.value, h1.airportCode, h2.airportCode, middleDate.departureDate);
       const h2ArrivalDate = middleLeg ? localDate(middleLeg.arrivalAt) : undefined;
-      if (!middleLeg || !h2ArrivalDate) continue;
+      if (!middleLeg || !h2ArrivalDate) return undefined;
       const finalCalendarStartedAt = nowMs();
       const finalCalendar = await runCachedFlightCalendar({
         key: buildFlightCalendarCacheKey({ origin: h2.airportCode, destination, startDate: addCalendarDays(h2ArrivalDate, MIN_TWO_STOP_STAY_NIGHTS), endDate: addCalendarDays(h2ArrivalDate, MAX_TWO_STOP_STAY_NIGHTS), stopPolicy: "nonstop" }), cache: flightCalendarCache,
@@ -537,7 +542,7 @@ export async function discoverTwoStopRoutes(
       twoStopCalendarWallMs += elapsedMs(finalCalendarStartedAt);
       recordStageCache("calendar", finalCalendar.cacheStatus, "finalCalendarCalls");
       const finalDate = selectCalendarDate(h2ArrivalDate, finalCalendar.value);
-      if (!finalDate) continue;
+      if (!finalDate) return undefined;
       const finalDetailedStartedAt = nowMs();
       const finalResult = await runCachedFlightOffers({
         key: buildFlightOffersCacheKey({ origin: h2.airportCode, destination, departureDate: finalDate.departureDate, adults: input.adults }), cache: flightOffersCache,
@@ -546,22 +551,50 @@ export async function discoverTwoStopRoutes(
       twoStopDetailedWallMs += elapsedMs(finalDetailedStartedAt);
       recordStageCache("detailed", finalResult.cacheStatus, "finalDetailedCalls");
       const finalLeg = selectNonstopOffer(finalResult.value, h2.airportCode, destination, finalDate.departureDate);
-      if (!finalLeg) continue;
+      if (!finalLeg) return undefined;
       const price = totalPrice([prepared.firstLeg, middleLeg, finalLeg]);
-      if (!price) { failures.push(`${h1.airportCode} → ${h2.airportCode}: leg currencies differ.`); continue; }
+      if (!price) { failures.push(`${h1.airportCode} → ${h2.airportCode}: leg currencies differ.`); return undefined; }
       const route: VerifiedTwoStopRoute = { h1, h2, firstLeg: prepared.firstLeg, middleLeg, finalLeg, h1StayNights: middleDate.stayNights, h2StayNights: finalDate.stayNights, totalPrice: price, totalDuration: prepared.firstLeg.durationMinutes + middleLeg.durationMinutes + finalLeg.durationMinutes, scoreBreakdown: { price: 0, duration: 0, stops: 0, detour: 0, stay: 0, final: 0 }, score: 0 };
-      verified.push(route);
       dependencies.onItineraryVerified?.(createItinerary({ origin, destination, score: route.score, legs: [
         { flight: route.firstLeg, stopoverAfter: { airportCode: route.h1.airportCode, city: route.h1.city, country: route.h1.country, nights: route.h1StayNights } },
         { flight: route.middleLeg, stopoverAfter: { airportCode: route.h2.airportCode, city: route.h2.city, country: route.h2.country, nights: route.h2StayNights } },
         { flight: route.finalLeg },
       ] }));
+      return route;
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown optional two-stop failure.";
       warn(`Two-stop pair failed for ${h1.airportCode} → ${h2.airportCode}: ${message}`);
       failures.push(`${h1.airportCode} → ${h2.airportCode}: ${message}`);
+      return undefined;
     }
+  };
+  const runPairWave = async (wave: Array<{ h1: TwoStopH1Candidate; h2: TwoStopH2Candidate }>) => {
+    if (wave.length === 0) return;
+    twoStopPairValidationWaves += 1;
+    attemptedPairs += wave.length;
+    const outcomes = await Promise.all(wave.map(validatePair));
+    // Promise.all retains schedule order, so tie-sensitive downstream sorting
+    // cannot be affected by which provider response completed first.
+    verified.push(...outcomes.flatMap((route) => route ? [route] : []));
+  };
+  const firstWave: Array<{ h1: TwoStopH1Candidate; h2: TwoStopH2Candidate }> = [];
+  const firstWaveH1s = new Set<string>();
+  for (const pair of pairSchedule) {
+    if (firstWaveH1s.has(pair.h1.airportCode)) break;
+    firstWave.push(pair);
+    firstWaveH1s.add(pair.h1.airportCode);
   }
+  await runPairWave(firstWave);
+  let nextPairIndex = firstWave.length;
+  while (verified.length < input.targetResults && nextPairIndex < pairSchedule.length) {
+    // Every attempt in this wave is required even under the prior sequential
+    // target-aware execution: fewer than `needed` successes cannot finish.
+    const needed = input.targetResults - verified.length;
+    const wave = pairSchedule.slice(nextPairIndex, nextPairIndex + Math.min(needed, pairSchedule.length - nextPairIndex));
+    await runPairWave(wave);
+    nextPairIndex += wave.length;
+  }
+  const twoStopPairValidationWallMs = elapsedMs(pairValidationStartedAt);
   const rankedRoutes = scoreRoutes(verified).slice(0, input.targetResults);
   return {
     itineraries: rankedRoutes.map((route) => createItinerary({
@@ -582,11 +615,14 @@ export async function discoverTwoStopRoutes(
     attemptedPairs, failures, technicalFailureCount, api,
     timing: {
       twoStopH1SelectionMs,
+      twoStopNetworkDiscoveryWallMs,
       twoStopExploreWallMs: Number(twoStopExploreWallMs.toFixed(2)),
       twoStopExploreRequests: stageCache.explore.length,
       twoStopExploreLiveRequests: stageCache.explore.filter((status) => status === "MISS").length,
       twoStopExploreCacheHits: stageCache.explore.filter((status) => status === "HIT").length,
       twoStopPairCandidateProcessingMs: Number(twoStopPairCandidateProcessingMs.toFixed(2)),
+      twoStopPairValidationWallMs,
+      twoStopPairValidationWaves,
       twoStopCalendarWallMs: Number(twoStopCalendarWallMs.toFixed(2)),
       twoStopCalendarRequests: stageCache.calendar.length,
       twoStopCalendarLiveRequests: stageCache.calendar.filter((status) => status === "MISS").length,

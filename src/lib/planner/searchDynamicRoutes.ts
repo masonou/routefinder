@@ -616,12 +616,10 @@ export async function searchDynamicRoutePortfolio(
         provenCleanRoutes: rankVerifiedRoutes(verifiedRoutes).verifiedRoutes
           .filter((route) => route.onwardPolicy === "nonstop"),
       });
-      const reverseNetwork = await discoverReverseDestinationNetwork(
+      const reverseNetworkPromise = discoverReverseDestinationNetwork(
         { destination: request.destination, earliestDeparture: request.departureWindow.start },
         dependencies,
       );
-      Object.assign(timing, reverseNetwork.timing);
-      if (reverseNetwork.failures > 0) warn(`Reverse Explore coverage degraded: ${4 - reverseNetwork.failures}/4 dates succeeded.`);
       const result = await discoverTwoStopRoutes(
         {
           origin: request.origin,
@@ -629,7 +627,7 @@ export async function searchDynamicRoutePortfolio(
           adults: request.adults ?? 1,
           h1Candidates,
           observedConnections: observedConnectionsByH1(detailedTraces),
-          reverseDestinationNetwork: reverseNetwork.network,
+          reverseDestinationNetwork: reverseNetworkPromise.then((result) => result.network),
           targetResults: forcePortfolioFull
             ? MAX_TWO_STOP_RESULTS
             : twoStopEligibility.targetResults,
@@ -646,6 +644,9 @@ export async function searchDynamicRoutePortfolio(
           onItineraryVerified: (itinerary) => emitItinerary(itinerary, "two_stop"),
         },
       );
+      const reverseNetwork = await reverseNetworkPromise;
+      Object.assign(timing, reverseNetwork.timing);
+      if (reverseNetwork.failures > 0) warn(`Reverse Explore coverage degraded: ${4 - reverseNetwork.failures}/4 dates succeeded.`);
       twoStopAdventures = result.itineraries;
       Object.assign(timing, result.timing);
       // The regular search treats two-stop exploration as supplementary. For

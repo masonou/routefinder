@@ -35,6 +35,50 @@ const bangkok: ValidatedHubCandidate = {
   bestOnwardPrice: 200, bestStayNights: 4, validationScore: 10,
 };
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => { resolve = resolvePromise; });
+  return { promise, resolve };
+}
+
+const twoH1s = [
+  { ...bangkok, airportCode: "BKK", role: "independent-primary" as const },
+  { ...bangkok, airportCode: "HKG", role: "independent-secondary" as const },
+];
+
+const twoStopExploreDestinations = [
+  { airportCode: "IST", city: "Istanbul", country: "Türkiye", latitude: 41.2753, longitude: 28.7519, outboundDate: "2026-09-05" },
+  { airportCode: "DOH", city: "Doha", country: "Qatar", latitude: 25.273056, longitude: 51.608056, outboundDate: "2026-09-05" },
+];
+
+function twoH1Dependencies(onMiddleCalendar?: (origin: string) => Promise<void> | void) {
+  return {
+    directDestinationsCache: null,
+    flightCalendarCache: null,
+    flightOffersCache: null,
+    directDestinationsProvider: {
+      async getDirectDestinations() { return twoStopExploreDestinations; },
+    },
+    flightCalendarProvider: {
+      async getFlightCalendar(input: { origin: string }) {
+        if (input.origin === "BKK" || input.origin === "HKG") {
+          await onMiddleCalendar?.(input.origin);
+          return [{ departureDate: "2026-09-04", price: 100, currency: "EUR", hasFlights: true }];
+        }
+        return [{ departureDate: "2026-09-07", price: 100, currency: "EUR", hasFlights: true }];
+      },
+    },
+    flightProvider: {
+      name: "test",
+      async searchOneWay(input: { origin: string; destination: string; departureWindow: { start: string } }) {
+        if (input.origin === "BNE") return [offer("BNE", input.destination, "2026-09-01")];
+        if (input.origin === "BKK" || input.origin === "HKG") return [offer(input.origin, input.destination, "2026-09-04")];
+        return [offer(input.origin, "LCA", "2026-09-07")];
+      },
+    },
+  };
+}
+
 test("two-stop eligibility is limited to long routes with portfolio space", () => {
   assert.deepEqual(
     shouldExploreTwoStopovers({ directDistanceKm: 3_000, cleanOneStopAdventureCount: 0 }),
@@ -127,6 +171,98 @@ test("dispatches both selected H1 Explore requests before either response is awa
   await bothExploresStarted;
   assert.deepEqual(new Set(explored), new Set(["BKK", "HKG"]));
   await search;
+});
+
+test("H1 networks begin while an independently-started reverse network is still pending", async () => {
+  const reverse = deferred<ReadonlySet<string>>();
+  const explored: string[] = [];
+  const bothExploresStarted = deferred<void>();
+  const search = discoverTwoStopRoutes(
+    {
+      origin: "BNE", destination: "LCA", adults: 1, h1Candidates: twoH1s,
+      observedConnections: new Map(), reverseDestinationNetwork: reverse.promise, targetResults: 3,
+    },
+    {
+      ...twoH1Dependencies(),
+      directDestinationsProvider: {
+        async getDirectDestinations({ origin }: { origin: string }) {
+          explored.push(origin);
+          if (explored.length === 2) bothExploresStarted.resolve();
+          return twoStopExploreDestinations;
+        },
+      },
+    },
+  );
+
+  await bothExploresStarted.promise;
+  assert.deepEqual(new Set(explored), new Set(["BKK", "HKG"]));
+  reverse.resolve(new Set(["IST"]));
+  await search;
+});
+
+test("the first round-robin pair wave validates both H1 branches concurrently", async () => {
+  const started: string[] = [];
+  const bothStarted = deferred<void>();
+  const release = deferred<void>();
+  const search = discoverTwoStopRoutes(
+    { origin: "BNE", destination: "LCA", adults: 1, h1Candidates: twoH1s, observedConnections: new Map(), targetResults: 3 },
+    twoH1Dependencies(async (origin) => {
+      started.push(origin);
+      if (started.length === 2) bothStarted.resolve();
+      await release.promise;
+    }),
+  );
+
+  await bothStarted.promise;
+  assert.deepEqual(new Set(started), new Set(["BKK", "HKG"]));
+  release.resolve();
+  const result = await search;
+  assert.equal(result.timing.twoStopPairValidationWaves, 2);
+});
+
+test("two successful first-wave pairs run A2 but skip B2 once the target is reached", async () => {
+  const middleCalls: string[] = [];
+  const result = await discoverTwoStopRoutes(
+    { origin: "BNE", destination: "LCA", adults: 1, h1Candidates: twoH1s, observedConnections: new Map(), targetResults: 3 },
+    twoH1Dependencies((origin) => { middleCalls.push(origin); }),
+  );
+
+  assert.equal(result.itineraries.length, 3);
+  assert.equal(result.attemptedPairs, 3);
+  assert.deepEqual(middleCalls, ["BKK", "HKG", "BKK"]);
+  assert.equal(result.timing.twoStopPairValidationWaves, 2);
+});
+
+test("one successful first-wave pair dispatches both remaining required pairs together", async () => {
+  const middleCalls: string[] = [];
+  const secondWaveStarted = deferred<void>();
+  const releaseSecondWave = deferred<void>();
+  const dependencies = twoH1Dependencies();
+  dependencies.flightCalendarProvider = {
+    async getFlightCalendar(input: { origin: string }) {
+      if (input.origin !== "BKK" && input.origin !== "HKG") {
+        return [{ departureDate: "2026-09-07", price: 100, currency: "EUR", hasFlights: true }];
+      }
+      middleCalls.push(input.origin);
+      const callNumberForH1 = middleCalls.filter((origin) => origin === input.origin).length;
+      if (input.origin === "HKG" && callNumberForH1 === 1) return [];
+      if (middleCalls.length === 4) secondWaveStarted.resolve();
+      if (callNumberForH1 === 2) await releaseSecondWave.promise;
+      return [{ departureDate: "2026-09-04", price: 100, currency: "EUR", hasFlights: true }];
+    },
+  };
+  const search = discoverTwoStopRoutes(
+    { origin: "BNE", destination: "LCA", adults: 1, h1Candidates: twoH1s, observedConnections: new Map(), targetResults: 3 },
+    dependencies,
+  );
+
+  await secondWaveStarted.promise;
+  assert.deepEqual(middleCalls, ["BKK", "HKG", "BKK", "HKG"]);
+  releaseSecondWave.resolve();
+  const result = await search;
+  assert.equal(result.itineraries.length, 3);
+  assert.equal(result.attemptedPairs, 4);
+  assert.equal(result.timing.twoStopPairValidationWaves, 2);
 });
 
 test("H2 discovery combines observed connections with Explore and excludes endpoints", () => {
