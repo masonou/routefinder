@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import type { Itinerary } from "../types/itinerary.ts";
 import type { SearchProgressEvent, TwoStopDiscoveryMetadata } from "../types/search.ts";
@@ -21,7 +21,7 @@ import {
 } from "../lib/analytics/events";
 import { consumeNdjsonBuffer } from "../lib/api/searchStream";
 import { DirectItineraryCard, ItineraryCard } from "./ItineraryCard";
-import { SearchLoadingState } from "./SearchLoadingState";
+import { SearchProgressStatus } from "./SearchProgressStatus";
 import {
   getInitialAdventureVisibility,
   isDirectBaseline,
@@ -29,6 +29,11 @@ import {
 } from "./itineraryPresentation";
 import { getResultsViewState } from "./resultsViewState";
 import { formatSearchFailureReference } from "./searchFailureReference";
+import {
+  countUniqueItineraries,
+  shouldHandleSearchProgressEvent,
+  type SearchProgressPhase,
+} from "./searchProgressPresentation";
 
 interface SearchApiError {
   error: string;
@@ -167,6 +172,7 @@ export function SearchFailurePanel({
 export function ResultsClient({ request }: ResultsClientProps) {
   const [itineraries, setItineraries] = useState<Itinerary[] | null>(null);
   const [searchActive, setSearchActive] = useState(true);
+  const [searchProgressPhase, setSearchProgressPhase] = useState<SearchProgressPhase>("searching");
   const [partialFailure, setPartialFailure] = useState<SearchFailureState | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [failure, setFailure] = useState<SearchFailureState | null>(null);
@@ -176,9 +182,20 @@ export function ResultsClient({ request }: ResultsClientProps) {
   const [twoStopDiscovery, setTwoStopDiscovery] = useState<TwoStopDiscoveryMetadata | null>(null);
   const [twoStopExploreState, setTwoStopExploreState] = useState<TwoStopExploreState>("idle");
   const [twoStopExploreFailure, setTwoStopExploreFailure] = useState<SearchFailureState | null>(null);
+  const activeSearchId = useRef(0);
 
   useEffect(() => {
     const abortController = new AbortController();
+    const searchId = activeSearchId.current + 1;
+    activeSearchId.current = searchId;
+
+    function isCurrentSearch(): boolean {
+      return shouldHandleSearchProgressEvent(
+        activeSearchId.current,
+        searchId,
+        abortController.signal.aborted,
+      );
+    }
 
     async function fetchResults() {
       const startedAt = performance.now();
@@ -186,6 +203,7 @@ export function ResultsClient({ request }: ResultsClientProps) {
       setFailure(null);
       setPartialFailure(null);
       setSearchActive(true);
+      setSearchProgressPhase("searching");
       setItineraries(null);
       setShowAllOneStop(false);
       setShowAllTwoStop(false);
@@ -206,7 +224,11 @@ export function ResultsClient({ request }: ResultsClientProps) {
         let completed = false;
         let firstResultSeen = false;
         await readSearchProgress(response, (event) => {
-          if (abortController.signal.aborted) return;
+          if (!isCurrentSearch()) return;
+          if (event.type === "search_started") {
+            setSearchProgressPhase("searching");
+            return;
+          }
           if (event.type === "itinerary_found") {
             if (!firstResultSeen) {
               firstResultSeen = true;
@@ -226,6 +248,7 @@ export function ResultsClient({ request }: ResultsClientProps) {
             if (event.type !== "search_complete") return;
             completed = true;
             setSearchActive(false);
+            setSearchProgressPhase("complete");
             if (payload.itineraries.length === 0) {
               trackNoResults({ origin: request.origin, destination: request.destination });
             } else {
@@ -237,6 +260,7 @@ export function ResultsClient({ request }: ResultsClientProps) {
           if (event.type === "search_failed") {
             const failureState = toFailureState(event as SearchApiError);
             setSearchActive(false);
+            setSearchProgressPhase("failed");
             setItineraries((current) => {
               if (current?.length) setPartialFailure(failureState);
               else {
@@ -247,11 +271,11 @@ export function ResultsClient({ request }: ResultsClientProps) {
             });
           }
         });
-        if (!completed && !abortController.signal.aborted) {
+        if (!completed && isCurrentSearch()) {
           throw new Error("Search stream ended before completion.");
         }
       } catch (error) {
-        if (!abortController.signal.aborted) {
+        if (isCurrentSearch()) {
           const failureState = createClientFailure(
             error instanceof TypeError ? "SL-REQUEST-NETWORK" : "SL-SEARCH-UNKNOWN",
             error instanceof TypeError ? "request" : "unknown",
@@ -267,6 +291,7 @@ export function ResultsClient({ request }: ResultsClientProps) {
           setFailure(failureState);
           setErrorMessage(error instanceof Error ? error.message : "Search failed.");
           setSearchActive(false);
+          setSearchProgressPhase("failed");
         }
       }
     }
@@ -348,29 +373,50 @@ export function ResultsClient({ request }: ResultsClientProps) {
   }
 
   const viewState = getResultsViewState(itineraries, errorMessage);
+  const foundRouteCount = countUniqueItineraries(itineraries ?? []);
+  const searchProgressKey = [
+    request.origin,
+    request.destination,
+    request.earliestDeparture,
+    request.adults,
+    retryToken,
+  ].join(":");
+  const searchProgressStatus = (
+    <SearchProgressStatus
+      key={searchProgressKey}
+      phase={searchProgressPhase}
+      foundRouteCount={foundRouteCount}
+    />
+  );
 
   if (viewState === "error") {
     return (
       <SearchFailurePanel
         failureReference={failure?.reference ?? null}
-        onRetry={() => setRetryToken((current) => current + 1)}
+        onRetry={() => {
+          setSearchProgressPhase("searching");
+          setRetryToken((current) => current + 1);
+        }}
       />
     );
   }
 
   if (viewState === "loading" || (searchActive && (itineraries?.length ?? 0) === 0)) {
-    return <SearchLoadingState origin={request.origin} destination={request.destination} />;
+    return searchProgressStatus;
   }
 
   if (viewState === "empty") {
     return (
-      <div className="space-y-2">
-        <p className="text-base font-medium text-slate-950">
-          No routes found for these dates.
-        </p>
-        <p className="text-sm text-slate-600">
-          Try another departure date or a different airport.
-        </p>
+      <div className="space-y-4">
+        {searchProgressStatus}
+        <div className="space-y-2">
+          <p className="text-base font-medium text-slate-950">
+            No routes found for these dates.
+          </p>
+          <p className="text-sm text-slate-600">
+            Try another departure date or a different airport.
+          </p>
+        </div>
       </div>
     );
   }
@@ -392,6 +438,7 @@ export function ResultsClient({ request }: ResultsClientProps) {
 
   return (
     <div className="space-y-10">
+      {searchProgressStatus}
       {directOptions.length > 0 ? (
         <section aria-labelledby="direct-option-heading" className="space-y-4">
           <h2 id="direct-option-heading" className="text-base font-semibold text-slate-950">
@@ -508,10 +555,6 @@ export function ResultsClient({ request }: ResultsClientProps) {
           We found some routes, but couldn&apos;t finish exploring all possibilities.
           {partialFailure.reference ? ` ${formatSearchFailureReference(partialFailure.reference)}` : ""}
         </p>
-      ) : null}
-
-      {searchActive || twoStopExploreState === "loading" ? (
-        <SearchLoadingState origin={request.origin} destination={request.destination} compact />
       ) : null}
 
       <p className="text-sm text-slate-500">Indicative fares only.</p>
