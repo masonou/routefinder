@@ -135,11 +135,11 @@ test("generic three-leg itineraries retain both intentional stopovers in their r
   assert.equal(getConnectionSummary(itinerary), "All 3 flights nonstop");
 });
 
-test("the shared Kiwi action retains one affiliate payload for each selected itinerary", () => {
+test("the shared Trip.com action retains one affiliate payload for each selected itinerary", () => {
   const adventure = pragueAdventure();
 
   assert.deepEqual(getAffiliateClickProperties(adventure, 2), {
-    affiliate: "kiwi",
+    affiliate: "trip.com",
     origin: "LHR",
     destination: "BKK",
     hub: "PRG",

@@ -11,7 +11,7 @@ type SearchEventProperties = {
 };
 
 type AffiliateClickProperties = SearchEventProperties & {
-  affiliate: "kiwi";
+  affiliate: "trip.com";
   hub: string;
   rank: number;
   totalPrice: number;
@@ -19,7 +19,10 @@ type AffiliateClickProperties = SearchEventProperties & {
   hubStayNights: number;
 };
 
-function capture(event: string, properties: Record<string, string | number | boolean>) {
+function capture(
+  event: string,
+  properties: Record<string, string | number | boolean>,
+) {
   if (typeof window === "undefined") return;
 
   try {
@@ -29,7 +32,10 @@ function capture(event: string, properties: Record<string, string | number | boo
   }
 }
 
-export function trackSearchSubmitted({ origin, destination }: SearchEventProperties) {
+export function trackSearchSubmitted({
+  origin,
+  destination,
+}: SearchEventProperties) {
   capture("search_submitted", { origin, destination });
 }
 
@@ -79,7 +85,9 @@ export function trackResultsFound({
     ...(twoStopAdventureCount === undefined
       ? {}
       : { two_stop_adventure_count: twoStopAdventureCount }),
-    ...(searchDurationMs === undefined ? {} : { search_duration_ms: searchDurationMs }),
+    ...(searchDurationMs === undefined
+      ? {}
+      : { search_duration_ms: searchDurationMs }),
   });
 }
 
@@ -155,7 +163,9 @@ export function trackSearchFailed({
     failure_reference: failureReference,
     failure_stage: failureStage,
     retryable,
-    ...(providerStatus === undefined ? {} : { provider_status: providerStatus }),
+    ...(providerStatus === undefined
+      ? {}
+      : { provider_status: providerStatus }),
   });
 }
 

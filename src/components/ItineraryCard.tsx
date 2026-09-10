@@ -18,7 +18,7 @@ interface ItineraryCardProps {
   directBaseline?: Itinerary;
 }
 
-function KiwiAffiliateLink({
+function TripAffiliateLink({
   itinerary,
   rank,
 }: Pick<ItineraryCardProps, "itinerary" | "rank">) {
@@ -97,7 +97,7 @@ export function DirectItineraryCard({
           {getConnectionSummary(itinerary)}
         </p>
         <div className="mt-4">
-          <KiwiAffiliateLink itinerary={itinerary} rank={rank} />
+          <TripAffiliateLink itinerary={itinerary} rank={rank} />
         </div>
       </div>
     </article>
@@ -172,7 +172,7 @@ export function ItineraryCard({
             </p>
           ) : null}
           <div className="mt-5">
-            <KiwiAffiliateLink itinerary={itinerary} rank={rank} />
+            <TripAffiliateLink itinerary={itinerary} rank={rank} />
           </div>
         </div>
       </div>

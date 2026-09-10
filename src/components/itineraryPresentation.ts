@@ -142,7 +142,7 @@ export function getDirectPriceComparison(
 export function getAffiliateClickProperties(itinerary: Itinerary, rank: number) {
   const primaryStopover = getItineraryStopovers(itinerary)[0];
   return {
-    affiliate: "kiwi" as const,
+    affiliate: "trip.com" as const,
     origin: itinerary.origin,
     destination: itinerary.destination,
     hub: primaryStopover?.airportCode ?? "",
