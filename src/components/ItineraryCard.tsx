@@ -1,5 +1,5 @@
 import { trackAffiliateClick } from "../lib/analytics/events";
-import { KIWI_AFFILIATE_URL } from "../lib/constants/affiliates.ts";
+import { TRIP_AFFILIATE_URL } from "../lib/constants/affiliates.ts";
 import { formatDuration } from "../lib/utils/formatFlight.ts";
 import { getItineraryStopovers, type Itinerary } from "../types/itinerary.ts";
 import { FlightLeg } from "./FlightLeg";
@@ -24,15 +24,15 @@ function KiwiAffiliateLink({
 }: Pick<ItineraryCardProps, "itinerary" | "rank">) {
   return (
     <a
-      href={KIWI_AFFILIATE_URL}
+      href={TRIP_AFFILIATE_URL}
       target="_blank"
       rel="sponsored noopener noreferrer"
       onClick={() => {
         trackAffiliateClick(getAffiliateClickProperties(itinerary, rank));
       }}
-      className="inline-flex min-h-11 w-full items-center justify-center rounded-lg bg-blue-700 px-4 text-sm font-semibold text-white outline-none transition hover:bg-blue-800 focus-visible:ring-2 focus-visible:ring-blue-700 focus-visible:ring-offset-2 sm:w-auto"
+      className="inline-flex min-h-11 w-full items-center justify-center rounded-lg bg-blue-700 px-4 text-m font-semibold text-white outline-none transition hover:bg-blue-800 focus-visible:ring-2 focus-visible:ring-blue-700 focus-visible:ring-offset-2 sm:w-auto"
     >
-      Check flights on Kiwi
+      Book on trip.com
     </a>
   );
 }
