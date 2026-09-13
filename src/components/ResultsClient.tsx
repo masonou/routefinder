@@ -4,7 +4,10 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
 import type { Itinerary } from "../types/itinerary.ts";
-import type { SearchProgressEvent, TwoStopDiscoveryMetadata } from "../types/search.ts";
+import type {
+  SearchProgressEvent,
+  TwoStopDiscoveryMetadata,
+} from "../types/search.ts";
 import type { PublicSearchRequest } from "../lib/utils/searchValidation.ts";
 import type {
   SearchFailureCode,
@@ -74,7 +77,10 @@ async function readSearchProgress(
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
-    buffer = consumeNdjsonBuffer(buffer + decoder.decode(value, { stream: true }), onEvent);
+    buffer = consumeNdjsonBuffer(
+      buffer + decoder.decode(value, { stream: true }),
+      onEvent,
+    );
   }
   buffer = consumeNdjsonBuffer(buffer + decoder.decode(), onEvent);
   if (buffer.trim()) consumeNdjsonBuffer(`${buffer}\n`, onEvent);
@@ -84,7 +90,11 @@ function createClientFailure(
   code: "SL-REQUEST-NETWORK" | "SL-SEARCH-UNKNOWN",
   stage: SearchFailureStage,
 ): SearchFailureState {
-  const suffix = globalThis.crypto.randomUUID().replace(/-/g, "").slice(0, 8).toUpperCase();
+  const suffix = globalThis.crypto
+    .randomUUID()
+    .replace(/-/g, "")
+    .slice(0, 8)
+    .toUpperCase();
   return {
     code,
     reference: `${code}-${suffix}`,
@@ -105,7 +115,9 @@ function toFailureState(payload: SearchApiError): SearchFailureState {
       reference: payload.failureReference,
       stage: payload.failureStage,
       retryable: payload.retryable,
-      ...(payload.providerStatus === undefined ? {} : { providerStatus: payload.providerStatus }),
+      ...(payload.providerStatus === undefined
+        ? {}
+        : { providerStatus: payload.providerStatus }),
     };
   }
   return createClientFailure("SL-SEARCH-UNKNOWN", "unknown");
@@ -114,10 +126,12 @@ function toFailureState(payload: SearchApiError): SearchFailureState {
 function countResultTypes(itineraries: Itinerary[]) {
   const directCount = itineraries.filter(isDirectBaseline).length;
   const oneStopAdventureCount = itineraries.filter(
-    (itinerary) => itinerary.legs.filter((leg) => leg.stopoverAfter).length === 1,
+    (itinerary) =>
+      itinerary.legs.filter((leg) => leg.stopoverAfter).length === 1,
   ).length;
   const twoStopAdventureCount = itineraries.filter(
-    (itinerary) => itinerary.legs.filter((leg) => leg.stopoverAfter).length === 2,
+    (itinerary) =>
+      itinerary.legs.filter((leg) => leg.stopoverAfter).length === 2,
   ).length;
   return {
     directCount,
@@ -149,7 +163,10 @@ export function SearchFailurePanel({
       </p>
       <p className="text-sm text-slate-600">Please try again.</p>
       {referenceText ? (
-        <p className="font-mono text-xs text-slate-500" aria-label={`Failure reference: ${failureReference}`}>
+        <p
+          className="font-mono text-xs text-slate-500"
+          aria-label={`Failure reference: ${failureReference}`}
+        >
           {referenceText}
         </p>
       ) : null}
@@ -172,16 +189,21 @@ export function SearchFailurePanel({
 export function ResultsClient({ request }: ResultsClientProps) {
   const [itineraries, setItineraries] = useState<Itinerary[] | null>(null);
   const [searchActive, setSearchActive] = useState(true);
-  const [searchProgressPhase, setSearchProgressPhase] = useState<SearchProgressPhase>("searching");
-  const [partialFailure, setPartialFailure] = useState<SearchFailureState | null>(null);
+  const [searchProgressPhase, setSearchProgressPhase] =
+    useState<SearchProgressPhase>("searching");
+  const [partialFailure, setPartialFailure] =
+    useState<SearchFailureState | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [failure, setFailure] = useState<SearchFailureState | null>(null);
   const [retryToken, setRetryToken] = useState(0);
   const [showAllOneStop, setShowAllOneStop] = useState(false);
   const [showAllTwoStop, setShowAllTwoStop] = useState(false);
-  const [twoStopDiscovery, setTwoStopDiscovery] = useState<TwoStopDiscoveryMetadata | null>(null);
-  const [twoStopExploreState, setTwoStopExploreState] = useState<TwoStopExploreState>("idle");
-  const [twoStopExploreFailure, setTwoStopExploreFailure] = useState<SearchFailureState | null>(null);
+  const [twoStopDiscovery, setTwoStopDiscovery] =
+    useState<TwoStopDiscoveryMetadata | null>(null);
+  const [twoStopExploreState, setTwoStopExploreState] =
+    useState<TwoStopExploreState>("idle");
+  const [twoStopExploreFailure, setTwoStopExploreFailure] =
+    useState<SearchFailureState | null>(null);
   const activeSearchId = useRef(0);
 
   useEffect(() => {
@@ -233,15 +255,21 @@ export function ResultsClient({ request }: ResultsClientProps) {
             if (!firstResultSeen) {
               firstResultSeen = true;
               trackFirstResultRendered({
-                origin: request.origin, destination: request.destination,
+                origin: request.origin,
+                destination: request.destination,
                 category: event.category,
                 timeToFirstResultMs: Math.round(performance.now() - startedAt),
               });
             }
-            setItineraries((current) => deduplicateItineraries([...(current ?? []), event.itinerary]));
+            setItineraries((current) =>
+              deduplicateItineraries([...(current ?? []), event.itinerary]),
+            );
             return;
           }
-          if (event.type === "search_snapshot" || event.type === "search_complete") {
+          if (
+            event.type === "search_snapshot" ||
+            event.type === "search_complete"
+          ) {
             const payload = event.result;
             setItineraries(deduplicateItineraries(payload.itineraries));
             setTwoStopDiscovery(payload.twoStopDiscovery);
@@ -250,10 +278,27 @@ export function ResultsClient({ request }: ResultsClientProps) {
             setSearchActive(false);
             setSearchProgressPhase("complete");
             if (payload.itineraries.length === 0) {
-              trackNoResults({ origin: request.origin, destination: request.destination });
+              trackNoResults({
+                origin: request.origin,
+                destination: request.destination,
+              });
             } else {
-              const { directCount, adventureCount, oneStopAdventureCount, twoStopAdventureCount } = countResultTypes(payload.itineraries);
-              trackResultsFound({ origin: request.origin, destination: request.destination, resultCount: payload.itineraries.length, directCount, adventureCount, oneStopAdventureCount, twoStopAdventureCount, searchDurationMs: Math.round(performance.now() - startedAt) });
+              const {
+                directCount,
+                adventureCount,
+                oneStopAdventureCount,
+                twoStopAdventureCount,
+              } = countResultTypes(payload.itineraries);
+              trackResultsFound({
+                origin: request.origin,
+                destination: request.destination,
+                resultCount: payload.itineraries.length,
+                directCount,
+                adventureCount,
+                oneStopAdventureCount,
+                twoStopAdventureCount,
+                searchDurationMs: Math.round(performance.now() - startedAt),
+              });
             }
             return;
           }
@@ -277,7 +322,9 @@ export function ResultsClient({ request }: ResultsClientProps) {
       } catch (error) {
         if (isCurrentSearch()) {
           const failureState = createClientFailure(
-            error instanceof TypeError ? "SL-REQUEST-NETWORK" : "SL-SEARCH-UNKNOWN",
+            error instanceof TypeError
+              ? "SL-REQUEST-NETWORK"
+              : "SL-SEARCH-UNKNOWN",
             error instanceof TypeError ? "request" : "unknown",
           );
           trackSearchFailed({
@@ -289,7 +336,9 @@ export function ResultsClient({ request }: ResultsClientProps) {
             retryable: failureState.retryable,
           });
           setFailure(failureState);
-          setErrorMessage(error instanceof Error ? error.message : "Search failed.");
+          setErrorMessage(
+            error instanceof Error ? error.message : "Search failed.",
+          );
           setSearchActive(false);
           setSearchProgressPhase("failed");
         }
@@ -314,7 +363,9 @@ export function ResultsClient({ request }: ResultsClientProps) {
     if (twoStopExploreState === "loading") return;
 
     const startedAt = performance.now();
-    const existingOneStopCount = countResultTypes(itineraries ?? []).oneStopAdventureCount;
+    const existingOneStopCount = countResultTypes(
+      itineraries ?? [],
+    ).oneStopAdventureCount;
     trackTwoStopExploreClicked({
       origin: request.origin,
       destination: request.destination,
@@ -332,29 +383,49 @@ export function ResultsClient({ request }: ResultsClientProps) {
       let completed = false;
       await readSearchProgress(response, (event) => {
         if (event.type === "itinerary_found" && event.category === "two_stop") {
-          setItineraries((current) => deduplicateItineraries([...(current ?? []), event.itinerary]));
+          setItineraries((current) =>
+            deduplicateItineraries([...(current ?? []), event.itinerary]),
+          );
           return;
         }
-        if (event.type === "search_complete" || event.type === "search_snapshot") {
-          const expandedItineraries = deduplicateItineraries(event.result.itineraries);
-          const twoStopCount = countResultTypes(expandedItineraries).twoStopAdventureCount;
+        if (
+          event.type === "search_complete" ||
+          event.type === "search_snapshot"
+        ) {
+          const expandedItineraries = deduplicateItineraries(
+            event.result.itineraries,
+          );
+          const twoStopCount =
+            countResultTypes(expandedItineraries).twoStopAdventureCount;
           setItineraries(expandedItineraries);
           setTwoStopDiscovery(event.result.twoStopDiscovery);
           if (event.type === "search_complete") {
             completed = true;
             setTwoStopExploreState(twoStopCount === 0 ? "empty" : "idle");
-            trackTwoStopExploreCompleted({ origin: request.origin, destination: request.destination, twoStopCount, durationMs: Math.round(performance.now() - startedAt) });
+            trackTwoStopExploreCompleted({
+              origin: request.origin,
+              destination: request.destination,
+              twoStopCount,
+              durationMs: Math.round(performance.now() - startedAt),
+            });
           }
           return;
         }
         if (event.type === "search_failed") {
           const failureState = toFailureState(event as SearchApiError);
-          trackTwoStopExploreFailed({ origin: request.origin, destination: request.destination, failureCode: failureState.code, failureReference: failureState.reference, failureStage: failureState.stage });
+          trackTwoStopExploreFailed({
+            origin: request.origin,
+            destination: request.destination,
+            failureCode: failureState.code,
+            failureReference: failureState.reference,
+            failureStage: failureState.stage,
+          });
           setTwoStopExploreFailure(failureState);
           setTwoStopExploreState("error");
         }
       });
-      if (!completed) throw new Error("Two-stop search stream ended before completion.");
+      if (!completed)
+        throw new Error("Two-stop search stream ended before completion.");
     } catch (error) {
       const failureState = createClientFailure(
         error instanceof TypeError ? "SL-REQUEST-NETWORK" : "SL-SEARCH-UNKNOWN",
@@ -401,7 +472,10 @@ export function ResultsClient({ request }: ResultsClientProps) {
     );
   }
 
-  if (viewState === "loading" || (searchActive && (itineraries?.length ?? 0) === 0)) {
+  if (
+    viewState === "loading" ||
+    (searchActive && (itineraries?.length ?? 0) === 0)
+  ) {
     return searchProgressStatus;
   }
 
@@ -421,7 +495,8 @@ export function ResultsClient({ request }: ResultsClientProps) {
     );
   }
 
-  const { directOptions, oneStopAdventures, twoStopAdventures } = partitionItineraries(itineraries ?? []);
+  const { directOptions, oneStopAdventures, twoStopAdventures } =
+    partitionItineraries(itineraries ?? []);
   const directBaseline = directOptions[0]?.itinerary;
   const initialVisibility = getInitialAdventureVisibility(
     oneStopAdventures.length,
@@ -441,23 +516,40 @@ export function ResultsClient({ request }: ResultsClientProps) {
       {searchProgressStatus}
       {directOptions.length > 0 ? (
         <section aria-labelledby="direct-option-heading" className="space-y-4">
-          <h2 id="direct-option-heading" className="text-base font-semibold text-slate-950">
+          <h2
+            id="direct-option-heading"
+            className="text-base font-semibold text-slate-950"
+          >
             Direct option
           </h2>
           {directOptions.map(({ itinerary, rank }) => (
-            <DirectItineraryCard key={itinerary.id} itinerary={itinerary} rank={rank} />
+            <DirectItineraryCard
+              key={itinerary.id}
+              itinerary={itinerary}
+              rank={rank}
+            />
           ))}
         </section>
       ) : null}
 
       {oneStopAdventures.length > 0 ? (
-        <section aria-labelledby="stopover-adventures-heading" className="space-y-4">
+        <section
+          aria-labelledby="stopover-adventures-heading"
+          className="space-y-4"
+        >
           <div>
-            <h2 id="stopover-adventures-heading" className="text-base font-semibold text-slate-950">
+            <h2
+              id="stopover-adventures-heading"
+              className="text-base font-semibold text-slate-950"
+            >
               Stopover adventures
             </h2>
             <p className="mt-1 text-sm text-slate-600">
-              {oneStopAdventures.length} {oneStopAdventures.length === 1 ? "stopover route" : "stopover routes"} found
+              {oneStopAdventures.length}{" "}
+              {oneStopAdventures.length === 1
+                ? "stopover route"
+                : "stopover routes"}{" "}
+              found
             </p>
           </div>
           <div className="space-y-4">
@@ -482,14 +574,18 @@ export function ResultsClient({ request }: ResultsClientProps) {
           {twoStopDiscovery?.canExplore ? (
             <div className="space-y-2" aria-live="polite">
               {twoStopExploreState === "loading" ? (
-                <p className="text-sm text-slate-600">Exploring two-stop adventures…</p>
+                <p className="text-sm text-slate-600">
+                  Exploring two-stop adventures…
+                </p>
               ) : null}
               {twoStopExploreState === "error" ? (
                 <div className="space-y-2 text-sm text-slate-600">
                   <p>We couldn&apos;t explore more routes right now.</p>
                   {twoStopExploreFailure ? (
                     <p className="font-mono text-xs text-slate-500">
-                      {formatSearchFailureReference(twoStopExploreFailure.reference)}
+                      {formatSearchFailureReference(
+                        twoStopExploreFailure.reference,
+                      )}
                     </p>
                   ) : null}
                 </div>
@@ -498,9 +594,25 @@ export function ResultsClient({ request }: ResultsClientProps) {
                 type="button"
                 onClick={() => void exploreTwoStopAdventures()}
                 disabled={twoStopExploreState === "loading"}
-                className="min-h-11 w-full rounded-lg border border-slate-300 px-4 text-sm font-semibold text-slate-900 outline-none hover:border-slate-400 focus-visible:ring-2 focus-visible:ring-blue-700 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
+                className="group inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-linear-to-r from-blue-600 via-indigo-600 to-violet-600 px-5 text-sm font-bold text-white shadow-lg shadow-blue-600/25 outline-none transition duration-200 hover:-translate-y-0.5 hover:from-blue-700 hover:via-indigo-700 hover:to-violet-700 hover:shadow-xl hover:shadow-indigo-600/30 focus-visible:ring-2 focus-visible:ring-blue-700 focus-visible:ring-offset-2 active:translate-y-0 disabled:cursor-not-allowed disabled:transform-none disabled:opacity-60 disabled:shadow-none sm:w-auto"
               >
-                {twoStopExploreState === "error" ? "Try again" : "Explore two-stop adventures"}
+                {twoStopExploreState === "error"
+                  ? "Try again"
+                  : "Explore two-stop adventures"}
+                <svg
+                  aria-hidden="true"
+                  viewBox="0 0 20 20"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  className="size-4 transition-transform duration-200 group-hover:translate-x-0.5"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M4 10h12m-5-5 5 5-5 5"
+                  />
+                </svg>
               </button>
             </div>
           ) : null}
@@ -513,13 +625,23 @@ export function ResultsClient({ request }: ResultsClientProps) {
       ) : null}
 
       {twoStopAdventures.length > 0 ? (
-        <section aria-labelledby="two-stop-adventures-heading" className="space-y-4">
+        <section
+          aria-labelledby="two-stop-adventures-heading"
+          className="space-y-4"
+        >
           <div>
-            <h2 id="two-stop-adventures-heading" className="text-base font-semibold text-slate-950">
+            <h2
+              id="two-stop-adventures-heading"
+              className="text-base font-semibold text-slate-950"
+            >
               Two-stop adventures
             </h2>
             <p className="mt-1 text-sm text-slate-600">
-              {twoStopAdventures.length} {twoStopAdventures.length === 1 ? "two-stop adventure" : "two-stop adventures"} found
+              {twoStopAdventures.length}{" "}
+              {twoStopAdventures.length === 1
+                ? "two-stop adventure"
+                : "two-stop adventures"}{" "}
+              found
             </p>
           </div>
           <div className="space-y-4">
@@ -544,7 +666,9 @@ export function ResultsClient({ request }: ResultsClientProps) {
         </section>
       ) : null}
 
-      {directOptions.length > 0 && oneStopAdventures.length === 0 && twoStopAdventures.length === 0 ? (
+      {directOptions.length > 0 &&
+      oneStopAdventures.length === 0 &&
+      twoStopAdventures.length === 0 ? (
         <p className="text-sm text-slate-600">
           No stopover routes met our current quality criteria for these dates.
         </p>
@@ -552,8 +676,11 @@ export function ResultsClient({ request }: ResultsClientProps) {
 
       {partialFailure ? (
         <p className="text-sm text-slate-600" aria-live="polite">
-          We found some routes, but couldn&apos;t finish exploring all possibilities.
-          {partialFailure.reference ? ` ${formatSearchFailureReference(partialFailure.reference)}` : ""}
+          We found some routes, but couldn&apos;t finish exploring all
+          possibilities.
+          {partialFailure.reference
+            ? ` ${formatSearchFailureReference(partialFailure.reference)}`
+            : ""}
         </p>
       ) : null}
 
