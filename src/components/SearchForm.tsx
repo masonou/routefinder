@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 
-import type { Airport } from "@/data/airports";
+import { findAirportByCode, type Airport } from "@/data/airports";
 import {
   buildResultsUrl,
   type SearchFormErrors,
@@ -24,13 +24,19 @@ function hasErrors(errors: SearchFormErrors): boolean {
   return Object.values(errors).some((value) => typeof value === "string");
 }
 
-export function SearchForm() {
+interface SearchFormProps {
+  initialValues?: SearchFormValues;
+}
+
+export function SearchForm({ initialValues = INITIAL_VALUES }: SearchFormProps) {
   const router = useRouter();
-  const [originAirport, setOriginAirport] = useState<Airport | null>(null);
-  const [destinationAirport, setDestinationAirport] = useState<Airport | null>(
-    null,
+  const [originAirport, setOriginAirport] = useState<Airport | null>(() =>
+    findAirportByCode(initialValues.origin) ?? null,
   );
-  const [values, setValues] = useState<SearchFormValues>(INITIAL_VALUES);
+  const [destinationAirport, setDestinationAirport] = useState<Airport | null>(
+    () => findAirportByCode(initialValues.destination) ?? null,
+  );
+  const [values, setValues] = useState<SearchFormValues>(initialValues);
   const [errors, setErrors] = useState<SearchFormErrors>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -61,7 +67,7 @@ export function SearchForm() {
 
   return (
     <form
-      className="w-full rounded-2xl border border-slate-100 bg-white p-5 shadow-md shadow-slate-900/6 sm:p-6"
+      className="w-full rounded-2xl border border-slate-200 bg-white p-5 shadow-sm shadow-slate-900/5 sm:p-6"
       onSubmit={handleSubmit}
       noValidate
     >
