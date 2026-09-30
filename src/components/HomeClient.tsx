@@ -31,13 +31,6 @@ const JOURNEY_EXAMPLES: JourneyExample[] = [
       { city: "Prague", nights: 2 },
     ],
   },
-  {
-    origin: "London",
-    originCode: "LHR",
-    destination: "Tokyo",
-    destinationCode: "NRT",
-    stopovers: [{ city: "Istanbul", nights: 3 }],
-  },
 ];
 
 function exampleDepartureDate(): string {
@@ -69,14 +62,15 @@ export function HomeClient() {
       <div className="mx-auto w-full max-w-6xl px-4 sm:px-6 lg:px-8">
         <header className="flex h-18 items-center" aria-label="Slow Layover">
           <p className="text-lg font-semibold tracking-tight text-slate-950">
-            Slow Layover <span className="font-normal text-slate-500">Beta</span>
+            Slow Layover{" "}
+            <span className="font-normal text-slate-500">Beta</span>
           </p>
         </header>
 
         <section className="pb-20 pt-12 sm:pb-28 sm:pt-18 lg:pb-32 lg:pt-24">
           <div className="mx-auto max-w-5xl">
-            <h1 className="mx-auto max-w-4xl text-center text-4xl font-semibold tracking-[-0.045em] text-slate-950 sm:text-5xl lg:text-6xl lg:leading-[1.04]">
-              Find somewhere worth stopping along the way
+            <h1 className="mx-auto  text-left text-3xl font-semibold tracking-[-0.045em] text-slate-950 sm:text-3xl lg:text-4xl lg:leading-[1.04]">
+              Find somewhere worth stopping along the way.
             </h1>
             <div id="trip-search" className="mt-10 scroll-mt-6 sm:mt-12">
               <SearchForm
@@ -91,10 +85,16 @@ export function HomeClient() {
           </div>
         </section>
 
-        <section className="border-t border-slate-200 py-16 sm:py-20" aria-labelledby="examples-heading">
+        <section
+          className="border-t border-slate-200 py-16 sm:py-20"
+          aria-labelledby="examples-heading"
+        >
           <div className="max-w-4xl">
-            <h2 id="examples-heading" className="text-2xl font-semibold tracking-[-0.03em] text-slate-950 sm:text-3xl">
-              A few ways to make the journey longer
+            <h2
+              id="examples-heading"
+              className="text-2xl font-semibold tracking-[-0.03em] text-slate-950 sm:text-3xl"
+            >
+              Examples of journeys
             </h2>
             <div className="mt-7 divide-y divide-slate-200 border-y border-slate-200">
               {JOURNEY_EXAMPLES.map((example) => (
@@ -106,17 +106,25 @@ export function HomeClient() {
                   aria-label={`Search from ${example.origin} to ${example.destination}`}
                 >
                   <span className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-lg leading-8 text-slate-700 sm:text-xl">
-                    <span className="font-medium text-slate-950">{example.origin}</span>
-                    <span aria-hidden="true" className="text-slate-400">→</span>
+                    <span className="font-medium text-slate-950">
+                      {example.origin}
+                    </span>
+                    <span aria-hidden="true" className="text-slate-400">
+                      →
+                    </span>
                     {example.stopovers.map((stopover) => (
                       <span key={stopover.city} className="contents">
                         <strong className="font-semibold text-blue-800 underline decoration-blue-200 underline-offset-4 transition group-hover:decoration-blue-500">
                           {stopover.nights} nights {stopover.city}
                         </strong>
-                        <span aria-hidden="true" className="text-slate-400">→</span>
+                        <span aria-hidden="true" className="text-slate-400">
+                          →
+                        </span>
                       </span>
                     ))}
-                    <span className="font-medium text-slate-950">{example.destination}</span>
+                    <span className="font-medium text-slate-950">
+                      {example.destination}
+                    </span>
                   </span>
                   <span className="mt-1 block text-sm text-slate-500">
                     Example journey — click to try this route
@@ -127,20 +135,32 @@ export function HomeClient() {
           </div>
         </section>
 
-        <section className="border-t border-slate-200 py-16 sm:py-20" aria-labelledby="feedback-heading">
+        <section
+          className="border-t border-slate-200 py-16 sm:py-20"
+          aria-labelledby="feedback-heading"
+        >
           <div className="grid max-w-4xl gap-10 lg:grid-cols-[0.8fr_1.2fr] lg:gap-16">
             <div>
-              <h2 id="feedback-heading" className="text-2xl font-semibold tracking-[-0.03em] text-slate-950 sm:text-3xl">
+              <h2
+                id="feedback-heading"
+                className="text-2xl font-semibold tracking-[-0.03em] text-slate-950 sm:text-3xl"
+              >
                 Got feedback?
               </h2>
               <p className="mt-3 max-w-md leading-7 text-slate-600">
-                Slow Layover is still in beta. If something feels confusing, broken, or genuinely useful, I’d love to hear it.
+                Slow Layover is still in beta. If something feels confusing,
+                broken, or useful, I’d love to hear it.
               </p>
             </div>
-            <form action="https://formspree.io/f/mqpanjgb" method="POST" className="space-y-5">
+            <form
+              action="https://formspree.io/f/mqpanjgb"
+              method="POST"
+              className="space-y-5"
+            >
               <div className="grid gap-5 sm:grid-cols-2">
                 <label className="block text-sm font-medium text-slate-800">
-                  Name <span className="font-normal text-slate-500">(optional)</span>
+                  Name{" "}
+                  <span className="font-normal text-slate-500">(optional)</span>
                   <input
                     type="text"
                     name="name"
@@ -149,7 +169,8 @@ export function HomeClient() {
                   />
                 </label>
                 <label className="block text-sm font-medium text-slate-800">
-                  Email <span className="font-normal text-slate-500">(optional)</span>
+                  Email{" "}
+                  <span className="font-normal text-slate-500">(optional)</span>
                   <input
                     type="email"
                     name="email"
@@ -177,8 +198,8 @@ export function HomeClient() {
           </div>
         </section>
 
-        <footer className="border-t border-slate-200 py-7 text-sm text-slate-500">
-          Slow Layover
+        <footer className="border-t border-slate-200 py-7 text-sm text-slate-500 text-center">
+          Built for the journey.
         </footer>
       </div>
     </main>
