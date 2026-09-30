@@ -19,9 +19,17 @@ type AffiliateClickProperties = SearchEventProperties & {
   hubStayNights: number;
 };
 
+type ItineraryReactionProperties = SearchEventProperties & {
+  itineraryId: string;
+  resultType: "direct" | "one-stop" | "two-stop";
+  rank: number;
+  stopoverAirports: string[];
+  stopoverNights: number[];
+};
+
 function capture(
   event: string,
-  properties: Record<string, string | number | boolean>,
+  properties: Record<string, string | number | boolean | string[] | number[]>,
 ) {
   if (typeof window === "undefined") return;
 
@@ -189,4 +197,35 @@ export function trackAffiliateClick({
     currency,
     hub_stay_nights: hubStayNights,
   });
+}
+
+function trackItineraryReaction(
+  event: "itinerary_liked" | "itinerary_unliked",
+  {
+    itineraryId,
+    origin,
+    destination,
+    resultType,
+    rank,
+    stopoverAirports,
+    stopoverNights,
+  }: ItineraryReactionProperties,
+) {
+  capture(event, {
+    itinerary_id: itineraryId,
+    origin,
+    destination,
+    result_type: resultType,
+    result_rank: rank,
+    stopover_airports: stopoverAirports,
+    stopover_nights: stopoverNights,
+  });
+}
+
+export function trackItineraryLiked(properties: ItineraryReactionProperties) {
+  trackItineraryReaction("itinerary_liked", properties);
+}
+
+export function trackItineraryUnliked(properties: ItineraryReactionProperties) {
+  trackItineraryReaction("itinerary_unliked", properties);
 }

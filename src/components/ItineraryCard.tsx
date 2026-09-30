@@ -1,4 +1,10 @@
-import { trackAffiliateClick } from "../lib/analytics/events";
+import { useState } from "react";
+
+import {
+  trackAffiliateClick,
+  trackItineraryLiked,
+  trackItineraryUnliked,
+} from "../lib/analytics/events";
 import { TRIP_AFFILIATE_URL } from "../lib/constants/affiliates.ts";
 import { formatDuration } from "../lib/utils/formatFlight.ts";
 import { getItineraryStopovers, type Itinerary } from "../types/itinerary.ts";
@@ -8,6 +14,7 @@ import {
   getAffiliateClickProperties,
   getConnectionSummary,
   getDirectPriceComparison,
+  getItineraryReactionProperties,
   getItineraryTimeline,
   getStopoverHeadline,
 } from "./itineraryPresentation";
@@ -30,10 +37,60 @@ function TripAffiliateLink({
       onClick={() => {
         trackAffiliateClick(getAffiliateClickProperties(itinerary, rank));
       }}
-      className="inline-flex min-h-11 w-full items-center justify-center rounded-lg bg-blue-700 px-4 text-m font-semibold text-white outline-none transition hover:bg-blue-800 focus-visible:ring-2 focus-visible:ring-blue-700 focus-visible:ring-offset-2 sm:w-auto"
+      className="inline-flex min-h-11 flex-1 items-center justify-center rounded-lg bg-blue-700 px-4 text-m font-semibold text-white outline-none transition hover:bg-blue-800 focus-visible:ring-2 focus-visible:ring-blue-700 focus-visible:ring-offset-2 sm:flex-none"
     >
       Book on trip.com
     </a>
+  );
+}
+
+function ItineraryActions({
+  itinerary,
+  rank,
+}: Pick<ItineraryCardProps, "itinerary" | "rank">) {
+  const [isLiked, setIsLiked] = useState(false);
+
+  function toggleLike() {
+    const nextIsLiked = !isLiked;
+    const properties = getItineraryReactionProperties(itinerary, rank);
+    if (nextIsLiked) {
+      trackItineraryLiked(properties);
+    } else {
+      trackItineraryUnliked(properties);
+    }
+    setIsLiked(nextIsLiked);
+  }
+
+  return (
+    <div className="flex items-center gap-2">
+      <TripAffiliateLink itinerary={itinerary} rank={rank} />
+      <button
+        type="button"
+        onClick={toggleLike}
+        aria-label={isLiked ? "Unlike itinerary" : "Like itinerary"}
+        aria-pressed={isLiked}
+        className={`inline-flex size-11 shrink-0 items-center justify-center rounded-lg border outline-none transition focus-visible:ring-2 focus-visible:ring-blue-700 focus-visible:ring-offset-2 ${
+          isLiked
+            ? "border-rose-200 bg-rose-50 text-rose-600 hover:border-rose-300 hover:bg-rose-100"
+            : "border-slate-300 text-slate-600 hover:border-slate-400 hover:bg-slate-50 hover:text-rose-600"
+        }`}
+      >
+        <svg
+          aria-hidden="true"
+          viewBox="0 0 24 24"
+          fill={isLiked ? "currentColor" : "none"}
+          stroke="currentColor"
+          strokeWidth="1.8"
+          className="size-5"
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            d="M20.8 8.6c0 5.2-8.8 10.4-8.8 10.4S3.2 13.8 3.2 8.6a4.4 4.4 0 0 1 7.7-2.9L12 7l1.1-1.3a4.4 4.4 0 0 1 7.7 2.9Z"
+          />
+        </svg>
+      </button>
+    </div>
   );
 }
 
@@ -97,7 +154,7 @@ export function DirectItineraryCard({
           {getConnectionSummary(itinerary)}
         </p>
         <div className="mt-4">
-          <TripAffiliateLink itinerary={itinerary} rank={rank} />
+          <ItineraryActions itinerary={itinerary} rank={rank} />
         </div>
       </div>
     </article>
@@ -114,7 +171,7 @@ export function ItineraryCard({
 
   return (
     <article className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm shadow-slate-900/3 sm:p-6">
-      <div className="grid gap-7 lg:grid-cols-[minmax(0,1fr)_12rem] lg:gap-8">
+      <div className="grid gap-7 lg:grid-cols-[minmax(0,1fr)_auto] lg:gap-8">
         <div className="min-w-0">
           <p className="text-xs font-semibold uppercase tracking-[0.14em] text-blue-700">
             {stopovers.length === 2
@@ -172,7 +229,7 @@ export function ItineraryCard({
             </p>
           ) : null}
           <div className="mt-5">
-            <TripAffiliateLink itinerary={itinerary} rank={rank} />
+            <ItineraryActions itinerary={itinerary} rank={rank} />
           </div>
         </div>
       </div>

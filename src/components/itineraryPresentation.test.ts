@@ -10,6 +10,7 @@ import {
   getFlightConnectionLabel,
   getInitialAdventureVisibility,
   getItineraryTimeline,
+  getItineraryReactionProperties,
   getStopoverHeadline,
   partitionItineraries,
 } from "./itineraryPresentation.ts";
@@ -147,6 +148,20 @@ test("the shared Trip.com action retains one affiliate payload for each selected
     totalPrice: 563,
     currency: "EUR",
     hubStayNights: 4,
+  });
+});
+
+test("itinerary reactions include the card's route and stopover metadata", () => {
+  const adventure = pragueAdventure();
+
+  assert.deepEqual(getItineraryReactionProperties(adventure, 2), {
+    itineraryId: adventure.id,
+    origin: "LHR",
+    destination: "BKK",
+    resultType: "one-stop",
+    rank: 2,
+    stopoverAirports: ["PRG"],
+    stopoverNights: [4],
   });
 });
 

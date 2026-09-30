@@ -152,3 +152,26 @@ export function getAffiliateClickProperties(itinerary: Itinerary, rank: number) 
     hubStayNights: primaryStopover?.nights ?? 0,
   };
 }
+
+export function getItineraryReactionProperties(
+  itinerary: Itinerary,
+  rank: number,
+) {
+  const stopovers = getItineraryStopovers(itinerary);
+  const resultType: "direct" | "one-stop" | "two-stop" =
+    stopovers.length === 0
+      ? "direct"
+      : stopovers.length === 1
+        ? "one-stop"
+        : "two-stop";
+
+  return {
+    itineraryId: itinerary.id,
+    origin: itinerary.origin,
+    destination: itinerary.destination,
+    resultType,
+    rank,
+    stopoverAirports: stopovers.map((stopover) => stopover.airportCode),
+    stopoverNights: stopovers.map((stopover) => stopover.nights),
+  };
+}
