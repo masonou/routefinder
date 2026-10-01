@@ -127,7 +127,7 @@ export function HomeClient() {
                     </span>
                   </span>
                   <span className="mt-1 block text-sm text-slate-500">
-                    Example journey — click to try this route
+                    Try this route
                   </span>
                 </button>
               ))}
