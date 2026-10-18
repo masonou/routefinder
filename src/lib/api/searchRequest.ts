@@ -110,7 +110,7 @@ export async function runSearchRequest(
         ? { forcedTwoStopRequestTotalMs: elapsedMs(searchStartedAt) }
         : {}),
     };
-    summarizeSearchTiming(timing, `${searchRequest.origin}→${searchRequest.destination} ${searchRequest.earliestDeparture}`);
+    summarizeSearchTiming(timing, `${searchRequest.origin}→${searchRequest.destination} ${searchRequest.earliestDeparture}→${searchRequest.arriveBy}`);
     // Detailed timing is server-only by default. Strip the planner's internal
     // timing before serialising, then attach the safe aggregate only when a
     // local debug session explicitly asks for it.

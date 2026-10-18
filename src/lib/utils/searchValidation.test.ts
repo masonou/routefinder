@@ -3,7 +3,6 @@ import test from "node:test";
 
 import { findAirportByCode } from "../../data/airports.ts";
 import { searchAirports } from "./airportSearch.ts";
-import { DEPARTURE_FLEX_DAYS } from "../constants/planner.ts";
 import {
   SearchValidationError,
   buildResultsUrl,
@@ -17,6 +16,7 @@ const validValues = {
   origin: "BNE",
   destination: "LCA",
   earliestDeparture: "2099-08-10",
+  arriveBy: "2099-08-14",
 };
 
 test("an exact IATA search ranks first", () => {
@@ -78,15 +78,16 @@ test("a past earliest departure is rejected", () => {
   );
 });
 
-test("API validation no longer requires latest arrival and derives a four-day window", () => {
+test("API validation requires an arrive-by date and derives an exact departure window", () => {
   const publicRequest = validateSearchApiBody(validValues);
   assert.deepEqual(toTripRequest(publicRequest), {
     origin: "BNE",
     destination: "LCA",
-    departureWindow: { start: "2099-08-10", end: "2099-08-13" },
+    departureWindow: { start: "2099-08-10", end: "2099-08-10" },
+    arriveByDate: "2099-08-14",
     adults: 1,
   });
-  assert.equal(DEPARTURE_FLEX_DAYS, 3);
+  assert.throws(() => validateSearchApiBody({ ...validValues, arriveBy: undefined }), /Missing arriveBy/);
 });
 
 test("API validation accepts only the predefined boolean forced two-stop mode", () => {
@@ -101,9 +102,14 @@ test("API validation accepts only the predefined boolean forced two-stop mode", 
   );
 });
 
-test("buildResultsUrl uses only the simplified search parameters", () => {
+test("buildResultsUrl carries the total journey window", () => {
   assert.equal(
     buildResultsUrl(validValues),
-    "/results?origin=BNE&destination=LCA&earliestDeparture=2099-08-10"
+    "/results?origin=BNE&destination=LCA&earliestDeparture=2099-08-10&arriveBy=2099-08-14"
   );
+});
+
+test("arrive-by must be after departure and within the planner limit", () => {
+  assert.match(validateSearchFormValues({ ...validValues, arriveBy: validValues.earliestDeparture }).dates ?? "", /after departure/);
+  assert.match(validateSearchFormValues({ ...validValues, arriveBy: "2099-09-01" }).dates ?? "", /at most/);
 });

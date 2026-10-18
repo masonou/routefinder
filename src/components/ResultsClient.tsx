@@ -355,6 +355,7 @@ export function ResultsClient({ request }: ResultsClientProps) {
     request.origin,
     request.destination,
     request.earliestDeparture,
+    request.arriveBy,
     request.adults,
     retryToken,
   ]);
@@ -449,6 +450,7 @@ export function ResultsClient({ request }: ResultsClientProps) {
     request.origin,
     request.destination,
     request.earliestDeparture,
+    request.arriveBy,
     request.adults,
     retryToken,
   ].join(":");

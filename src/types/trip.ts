@@ -9,5 +9,7 @@ export interface TripRequest {
   destination: string;
   // Controls when the first flight is allowed to depart.
   departureWindow: DateWindow;
+  /** Destination-local calendar date by whose end the final flight must arrive. */
+  arriveByDate?: string;
   adults?: number;
 }

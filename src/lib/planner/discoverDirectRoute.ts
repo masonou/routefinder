@@ -1,18 +1,14 @@
 import {
-  buildFlightCalendarCacheKey,
-  getFlightCalendarCache,
-  runCachedFlightCalendar,
-  type FlightCalendarCache,
-} from "../cache/flightCalendarCache.ts";
-import {
   buildFlightOffersCacheKey,
   getFlightOffersCache,
   runCachedFlightOffers,
   type FlightOffersCache,
 } from "../cache/flightOffersCache.ts";
+import { buildFlightCalendarCacheKey, getFlightCalendarCache, runCachedFlightCalendar, type FlightCalendarCache } from "../cache/flightCalendarCache.ts";
 import type { FlightCalendarDay, FlightCalendarProvider, FlightProvider } from "../providers/types.ts";
 import { createItinerary, type Itinerary } from "../../types/itinerary.ts";
 import type { FlightOffer } from "../../types/flight.ts";
+import { arrivesByDate } from "./filters.ts";
 import { addCalendarDays } from "../utils/dateWindow.ts";
 import { DEPARTURE_FLEX_DAYS } from "../constants/planner.ts";
 import { elapsedMs, nowMs } from "../instrumentation/searchTiming.ts";
@@ -26,12 +22,16 @@ type WarningFunction = (message: string) => void;
 export interface DirectRouteDiscoveryInput {
   origin: string;
   destination: string;
-  earliestDeparture: string;
+  departureDate?: string;
+  /** @deprecated use departureDate. */
+  earliestDeparture?: string;
+  arriveByDate?: string;
   adults?: number;
 }
 
 export interface DirectRouteDiscoveryDependencies {
-  flightCalendarProvider: FlightCalendarProvider;
+  /** Retained so injected provider dependencies remain source-compatible. */
+  flightCalendarProvider?: FlightCalendarProvider;
   flightProvider: FlightProvider;
   calendarCache?: FlightCalendarCache | null;
   flightOffersCache?: FlightOffersCache | null;
@@ -46,27 +46,6 @@ export interface DirectRouteTiming {
   detailedMs: number;
   detailedCacheStatus?: "HIT" | "MISS";
   totalMs: number;
-}
-
-export function selectBestDirectCalendarDate(
-  calendar: FlightCalendarDay[],
-  startDate: string,
-  endDate: string,
-): string | undefined {
-  return calendar
-    .filter(
-      (day) =>
-        day.hasFlights &&
-        typeof day.price === "number" &&
-        Number.isFinite(day.price) &&
-        day.departureDate >= startDate &&
-        day.departureDate <= endDate,
-    )
-    .sort(
-      (left, right) =>
-        (left.price as number) - (right.price as number) ||
-        left.departureDate.localeCompare(right.departureDate),
-    )[0]?.departureDate;
 }
 
 export function selectBestDirectOffer(
@@ -91,6 +70,14 @@ export function selectBestDirectOffer(
     )[0];
 }
 
+/** Retained for consumers that display/select an exact-date calendar result. */
+export function selectBestDirectCalendarDate(
+  calendar: FlightCalendarDay[], startDate: string, endDate: string,
+): string | undefined {
+  return calendar.filter((day) => day.hasFlights && Number.isFinite(day.price) && day.departureDate >= startDate && day.departureDate <= endDate)
+    .sort((left, right) => (left.price as number) - (right.price as number) || left.departureDate.localeCompare(right.departureDate))[0]?.departureDate;
+}
+
 export async function discoverDirectItinerary(
   input: DirectRouteDiscoveryInput,
   dependencies: DirectRouteDiscoveryDependencies,
@@ -99,12 +86,6 @@ export async function discoverDirectItinerary(
   const timing: DirectRouteTiming = { calendarMs: 0, detailedMs: 0, totalMs: 0 };
   const origin = input.origin.trim().toUpperCase();
   const destination = input.destination.trim().toUpperCase();
-  const startDate = input.earliestDeparture;
-  const endDate = addCalendarDays(startDate, DEPARTURE_FLEX_DAYS);
-  const calendarCache =
-    dependencies.calendarCache === undefined
-      ? getFlightCalendarCache()
-      : dependencies.calendarCache;
   const flightOffersCache =
     dependencies.flightOffersCache === undefined
       ? getFlightOffersCache()
@@ -112,36 +93,32 @@ export async function discoverDirectItinerary(
   const warn = dependencies.warn ?? console.warn;
 
   try {
-    const calendarStartedAt = nowMs();
-    const calendar = await runCachedFlightCalendar({
-      key: buildFlightCalendarCacheKey({
-        origin,
-        destination,
-        startDate,
-        endDate,
-        stopPolicy: "nonstop",
-      }),
-      cache: calendarCache,
-      load: () =>
-        dependencies.flightCalendarProvider.getFlightCalendar({
-          origin,
-          destination,
-          departureWindow: { start: startDate, end: endDate },
-          stopPolicy: "nonstop",
-        }),
-      warn,
-    });
-    timing.calendarMs = elapsedMs(calendarStartedAt);
-    timing.calendarCacheStatus = calendar.cacheStatus;
-    const selectedDate = selectBestDirectCalendarDate(calendar.value, startDate, endDate);
-    if (!selectedDate) return undefined;
-
+    // This branch is only for callers using the retired internal input shape.
+    // Public searches always provide departureDate and avoid this Calendar call.
+    const departureDate = input.departureDate ?? input.earliestDeparture;
+    if (!departureDate) return undefined;
+    if (!input.departureDate && dependencies.flightCalendarProvider) {
+      const startDate = departureDate;
+      const endDate = addCalendarDays(startDate, DEPARTURE_FLEX_DAYS);
+      const calendarStartedAt = nowMs();
+      const calendar = await runCachedFlightCalendar({
+        key: buildFlightCalendarCacheKey({ origin, destination, startDate, endDate, stopPolicy: "nonstop" }),
+        cache: dependencies.calendarCache === undefined ? getFlightCalendarCache() : dependencies.calendarCache,
+        load: () => dependencies.flightCalendarProvider!.getFlightCalendar({ origin, destination, departureWindow: { start: startDate, end: endDate }, stopPolicy: "nonstop" }),
+        warn,
+      });
+      timing.calendarMs = elapsedMs(calendarStartedAt);
+      timing.calendarCacheStatus = calendar.cacheStatus;
+      const selectedDate = selectBestDirectCalendarDate(calendar.value, startDate, endDate);
+      if (!selectedDate) return undefined;
+      input = { ...input, departureDate: selectedDate };
+    }
     const detailedStartedAt = nowMs();
     const detailed = await runCachedFlightOffers({
       key: buildFlightOffersCacheKey({
         origin,
         destination,
-        departureDate: selectedDate,
+        departureDate: input.departureDate ?? departureDate,
         adults: input.adults ?? 1,
       }),
       cache: flightOffersCache,
@@ -149,7 +126,7 @@ export async function discoverDirectItinerary(
         dependencies.flightProvider.searchOneWay({
           origin,
           destination,
-          departureWindow: { start: selectedDate, end: selectedDate },
+          departureWindow: { start: input.departureDate ?? departureDate, end: input.departureDate ?? departureDate },
           adults: input.adults ?? 1,
         }),
       warn,
@@ -160,11 +137,13 @@ export async function discoverDirectItinerary(
       detailed.value,
       origin,
       destination,
-      selectedDate,
+      input.departureDate ?? departureDate,
     );
-    if (!directOffer) {
+    if (!directOffer || !arrivesByDate(directOffer, input.arriveByDate)) {
       warn(
-        `Direct Calendar/detailed mismatch for ${origin}-${destination} on ${selectedDate}; omitting direct baseline.`,
+        input.arriveByDate
+          ? `No direct route meets the selected arrival window for ${origin}-${destination}.`
+          : `Direct Calendar/detailed mismatch for ${origin}-${destination}; omitting direct baseline.`,
       );
       return undefined;
     }

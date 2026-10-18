@@ -28,16 +28,18 @@ test("identical normalized searches use the same versioned cache key", () => {
     origin: "bne",
     destination: "lca",
     earliestDeparture: "2026-08-17",
+    arriveBy: "2026-08-22",
     adults: 1,
   });
   const secondKey = buildSearchCacheKey({
     origin: "BNE",
     destination: "LCA",
     earliestDeparture: "2026-08-17",
+    arriveBy: "2026-08-22",
     adults: 1,
   });
 
-  assert.equal(firstKey, "routefinder:search:v18-hybrid-two-stop:BNE:LCA:2026-08-17:1:dynamic:normal");
+  assert.equal(firstKey, "routefinder:search:v19-arrive-by:BNE:LCA:2026-08-17:2026-08-22:1:dynamic:normal");
   assert.equal(firstKey, secondKey);
 });
 
@@ -46,6 +48,7 @@ test("cache keys differ for date, route, and adult-count changes", () => {
     origin: "BNE",
     destination: "LCA",
     earliestDeparture: "2026-08-17",
+    arriveBy: "2026-08-22",
     adults: 1,
   };
   const baseKey = buildSearchCacheKey(baseInput);
@@ -61,6 +64,7 @@ test("cache keys differ for date, route, and adult-count changes", () => {
   );
   assert.notEqual(buildSearchCacheKey({ ...baseInput, adults: 2 }), baseKey);
   assert.notEqual(buildSearchCacheKey({ ...baseInput, forceTwoStop: true }), baseKey);
+  assert.notEqual(buildSearchCacheKey({ ...baseInput, arriveBy: "2026-08-23" }), baseKey);
 });
 
 test("a cache miss runs the planner result loader and stores successful results for five minutes", async () => {

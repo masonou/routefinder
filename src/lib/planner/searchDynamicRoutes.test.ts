@@ -68,7 +68,7 @@ function offer(
     origin,
     destination,
     departureAt: `${departureDate}T08:00:00`,
-    arrivalAt: `${departureDate}T16:00:00`,
+    arrivalAt: `${departureDate}T08:00:00`,
     durationMinutes,
     stops,
     segments: [
@@ -76,7 +76,7 @@ function offer(
         origin,
         destination,
         departureAt: `${departureDate}T08:00:00`,
-        arrivalAt: `${departureDate}T16:00:00`,
+        arrivalAt: `${departureDate}T08:00:00`,
         airlineName: "Test Air",
       },
     ],

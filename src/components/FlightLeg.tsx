@@ -1,5 +1,5 @@
 import type { FlightOffer } from "../types/flight.ts";
-import { formatFlightTime } from "../lib/utils/formatFlight.ts";
+import { formatFlightDate, formatFlightTime } from "../lib/utils/formatFlight.ts";
 import {
   formatResultMoney,
   getFlightAirlines,
@@ -19,7 +19,7 @@ export function FlightLeg({ leg }: FlightLegProps) {
           {getFlightRouteLabel(leg)}
         </p>
         <p className="mt-1 text-sm text-slate-600">
-          {formatFlightTime(leg.departureAt)}–{formatFlightTime(leg.arrivalAt)}{" "}
+          {formatFlightDate(leg.departureAt)} {formatFlightTime(leg.departureAt)} → {formatFlightDate(leg.arrivalAt)} {formatFlightTime(leg.arrivalAt)}{" "}
           · {getFlightAirlines(leg)}
         </p>
       </div>

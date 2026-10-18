@@ -1,6 +1,6 @@
 import { findAirportByCode } from "../../data/airports.ts";
-import { DEPARTURE_FLEX_DAYS } from "../constants/planner.ts";
-import { addCalendarDays } from "./dateWindow.ts";
+import { MAX_JOURNEY_WINDOW_DAYS } from "../constants/planner.ts";
+import { calendarDayDifference } from "./dateWindow.ts";
 import type { TripRequest } from "../../types/trip.ts";
 
 const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -9,9 +9,11 @@ export interface SearchFormValues {
   origin: string;
   destination: string;
   earliestDeparture: string;
+  arriveBy?: string;
 }
 
-export interface PublicSearchRequest extends SearchFormValues {
+export interface PublicSearchRequest extends Omit<SearchFormValues, "arriveBy"> {
+  arriveBy: string;
   adults: number;
   /** Server-facing only; never written to the results URL. */
   forceTwoStop?: boolean;
@@ -72,12 +74,16 @@ export function validateSearchFormValues(values: SearchFormValues): SearchFormEr
     errors.destination = "Choose different airports.";
   }
 
-  if (!values.earliestDeparture) {
-    errors.dates = "Choose a departure date.";
-  } else if (!isValidIsoDate(values.earliestDeparture)) {
+  if (!values.earliestDeparture || !values.arriveBy) {
+    errors.dates = "Choose both departure and arrive-by dates.";
+  } else if (!isValidIsoDate(values.earliestDeparture) || !isValidIsoDate(values.arriveBy)) {
     errors.dates = "Use valid dates.";
   } else if (values.earliestDeparture < todayIsoDate()) {
     errors.dates = "Dates cannot be in the past.";
+  } else if (values.arriveBy <= values.earliestDeparture) {
+    errors.dates = "Arrive by must be after departure.";
+  } else if (calendarDayDifference(values.earliestDeparture, values.arriveBy) > MAX_JOURNEY_WINDOW_DAYS) {
+    errors.dates = `Journey windows can be at most ${MAX_JOURNEY_WINDOW_DAYS} days.`;
   }
 
   return errors;
@@ -99,6 +105,7 @@ export function createSearchRequestFromFormValues(
     origin: normalizeAirportCodeInput(values.origin),
     destination: normalizeAirportCodeInput(values.destination),
     earliestDeparture: values.earliestDeparture,
+    arriveBy: values.arriveBy as string,
     adults,
   };
 }
@@ -130,6 +137,7 @@ export function validateSearchApiBody(body: unknown): PublicSearchRequest {
       origin: getRequiredString(record, "origin"),
       destination: getRequiredString(record, "destination"),
       earliestDeparture: getRequiredString(record, "earliestDeparture"),
+      arriveBy: getRequiredString(record, "arriveBy"),
     },
     adults
   );
@@ -142,8 +150,9 @@ export function toTripRequest(request: PublicSearchRequest): TripRequest {
     destination: request.destination,
     departureWindow: {
       start: request.earliestDeparture,
-      end: addCalendarDays(request.earliestDeparture, DEPARTURE_FLEX_DAYS),
+      end: request.earliestDeparture,
     },
+    arriveByDate: request.arriveBy,
     adults: request.adults,
   };
 }
@@ -153,6 +162,7 @@ export function buildResultsUrl(values: SearchFormValues): string {
     origin: normalizeAirportCodeInput(values.origin),
     destination: normalizeAirportCodeInput(values.destination),
     earliestDeparture: values.earliestDeparture,
+    arriveBy: values.arriveBy ?? "",
   });
   return `/results?${params.toString()}`;
 }

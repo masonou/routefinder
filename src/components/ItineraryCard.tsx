@@ -7,6 +7,7 @@ import {
 } from "../lib/analytics/events";
 import { TRIP_AFFILIATE_URL } from "../lib/constants/affiliates.ts";
 import { formatDuration } from "../lib/utils/formatFlight.ts";
+import { calculateHubStayHours } from "../lib/planner/filters.ts";
 import { getItineraryStopovers, type Itinerary } from "../types/itinerary.ts";
 import { FlightLeg } from "./FlightLeg";
 import {
@@ -203,8 +204,15 @@ export function ItineraryCard({
           </div>
 
           <div className="mt-7 space-y-5 border-t border-slate-100 pt-5">
-            {itinerary.legs.map(({ flight }) => (
-              <FlightLeg key={flight.id} leg={flight} />
+            {itinerary.legs.map(({ flight, stopoverAfter }, index) => (
+              <div key={flight.id} className="space-y-2">
+                <FlightLeg leg={flight} />
+                {stopoverAfter && itinerary.legs[index + 1] ? (
+                  <p className="text-sm font-medium text-blue-800">
+                    {formatDuration(Math.round(calculateHubStayHours(flight, itinerary.legs[index + 1]!.flight) * 60))} in {stopoverAfter.city ?? stopoverAfter.airportCode}
+                  </p>
+                ) : null}
+              </div>
             ))}
           </div>
         </div>

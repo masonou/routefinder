@@ -7,7 +7,6 @@ import {
   type SearchFormValues,
 } from "../../lib/utils/searchValidation.ts";
 import { formatDateRangeCompact } from "../../lib/utils/formatFlight.ts";
-import { getFlexibleDepartureDates } from "../../lib/utils/flexibleDepartureDates.ts";
 
 type ResultsPageProps = {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
@@ -36,6 +35,7 @@ export default async function ResultsPage({ searchParams }: ResultsPageProps) {
     origin: readQueryValue(params, "origin") ?? "",
     destination: readQueryValue(params, "destination") ?? "",
     earliestDeparture: readQueryValue(params, "earliestDeparture") ?? "",
+    arriveBy: readQueryValue(params, "arriveBy") ?? "",
   };
   const request = parseRequest(values);
 
@@ -54,7 +54,6 @@ export default async function ResultsPage({ searchParams }: ResultsPageProps) {
 
   const origin = findAirportByCode(request.origin);
   const destination = findAirportByCode(request.destination);
-  const departureDates = getFlexibleDepartureDates(request.earliestDeparture);
 
   return (
     <main className="min-h-svh bg-[#f7f8fa] px-4 py-10 text-slate-950 sm:px-6">
@@ -76,12 +75,10 @@ export default async function ResultsPage({ searchParams }: ResultsPageProps) {
             </h1>
             <div className="flex flex-wrap items-center gap-x-2 text-sm text-slate-600">
               <span>
-                Departing{" "}
-                {formatDateRangeCompact(
-                  request.earliestDeparture,
-                  departureDates.at(-1) ?? request.earliestDeparture,
-                )}
+                Depart {formatDateRangeCompact(request.earliestDeparture, request.earliestDeparture)}
               </span>
+              <span aria-hidden="true">·</span>
+              <span>Arrive by {formatDateRangeCompact(request.arriveBy, request.arriveBy)}</span>
               <span aria-hidden="true">·</span>
               <span>One-way</span>
             </div>

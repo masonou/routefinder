@@ -17,14 +17,6 @@ function isValidIsoDate(date: string): boolean {
   return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === date;
 }
 
-function parseIsoDate(date: string): Date | null {
-  if (!isValidIsoDate(date)) {
-    return null;
-  }
-
-  return new Date(`${date}T00:00:00.000Z`);
-}
-
 function parseIsoDateTime(value: string): Date | null {
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime()) ? null : parsed;
@@ -37,6 +29,32 @@ function getUtcDatePart(value: string): string | null {
   }
 
   return isValidIsoDate(match[1]) ? match[1] : null;
+}
+
+/** SearchAPI provides airport-local display timestamps without an offset. */
+export function getLocalDatePart(value: string): string | null {
+  return getUtcDatePart(value);
+}
+
+export function arrivesByDate(flight: FlightOffer, arriveByDate: string | undefined): boolean {
+  if (!arriveByDate) return true;
+  const arrivalDate = getLocalDatePart(flight.arrivalAt);
+  return arrivalDate !== null && arrivalDate <= arriveByDate;
+}
+
+export function hasMeaningfulStopover(firstLeg: FlightOffer, secondLeg: FlightOffer): boolean {
+  const arrival = parseIsoDateTime(firstLeg.arrivalAt);
+  const departure = parseIsoDateTime(secondLeg.departureAt);
+  if (!arrival || !departure || departure <= arrival) return false;
+  return true;
+}
+
+/** Elapsed time at the same hub, calculated from the provider's local timestamps. */
+export function calculateHubStayHours(firstLeg: FlightOffer, secondLeg: FlightOffer): number {
+  const arrival = parseIsoDateTime(firstLeg.arrivalAt);
+  const departure = parseIsoDateTime(secondLeg.departureAt);
+  if (!arrival || !departure || departure <= arrival) return -1;
+  return (departure.getTime() - arrival.getTime()) / (60 * 60 * 1000);
 }
 
 function compareIsoDates(left: string, right: string): number {
@@ -126,25 +144,12 @@ export function isReasonableFlight(flight: FlightOffer): boolean {
 export function calculateHubStayNights(firstLeg: FlightOffer, secondLeg: FlightOffer): number {
   const arrivalDateTime = parseIsoDateTime(firstLeg.arrivalAt);
   const departureDateTime = parseIsoDateTime(secondLeg.departureAt);
-  if (!arrivalDateTime || !departureDateTime || departureDateTime <= arrivalDateTime) {
+  if (!arrivalDateTime || !departureDateTime || !hasMeaningfulStopover(firstLeg, secondLeg)) {
     return -1;
   }
 
-  const arrivalDatePart = getUtcDatePart(firstLeg.arrivalAt);
-  const departureDatePart = getUtcDatePart(secondLeg.departureAt);
-  if (!arrivalDatePart || !departureDatePart) {
-    return -1;
-  }
-
-  const arrivalDate = parseIsoDate(arrivalDatePart);
-  const departureDate = parseIsoDate(departureDatePart);
-  if (!arrivalDate || !departureDate) {
-    return -1;
-  }
-
-  const calendarDayDifference = Math.floor(
-    (departureDate.getTime() - arrivalDate.getTime()) / MILLISECONDS_PER_DAY
+  const elapsedNights = Math.floor(
+    (departureDateTime.getTime() - arrivalDateTime.getTime()) / MILLISECONDS_PER_DAY,
   );
-
-  return calendarDayDifference > 0 ? calendarDayDifference : -1;
+  return elapsedNights > 0 ? elapsedNights : -1;
 }

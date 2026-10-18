@@ -23,7 +23,7 @@ import {
 import type { FlightProvider } from "../providers/types.ts";
 import { normalizeSearchApiError, type NormalizedSearchApiError } from "../providers/searchApi.ts";
 import { FatalSearchStageError } from "./fatalStageFailure.ts";
-import { calculateHubStayNights, isFlightWithinDepartureWindow, isReasonableFlight } from "./filters.ts";
+import { arrivesByDate, calculateHubStayNights, hasMeaningfulStopover, isFlightWithinDepartureWindow, isReasonableFlight } from "./filters.ts";
 import type { OnwardFlightPolicy, ValidatedHubCandidate } from "./validateHubCandidates.ts";
 import type { FlightOffer, Money } from "../../types/flight.ts";
 import {
@@ -84,6 +84,7 @@ export interface VerifyHubCandidatesInput {
   destination: string;
   candidates: ValidatedHubCandidate[];
   adults?: number;
+  arriveByDate?: string;
 }
 
 export interface VerifyHubCandidatesOptions {
@@ -161,7 +162,7 @@ function isMatchingOffer(
   );
 }
 
-function selectFirstLeg(offers: FlightOffer[]): FlightOffer | undefined {
+function selectFirstLeg(offers: FlightOffer[]): FlightOffer[] {
   return [...offers]
     .filter((offer) => offer.stops === 0)
     .sort(
@@ -169,7 +170,7 @@ function selectFirstLeg(offers: FlightOffer[]): FlightOffer | undefined {
         left.indicativePrice.amount - right.indicativePrice.amount ||
         left.durationMinutes - right.durationMinutes ||
         left.id.localeCompare(right.id),
-    )[0];
+    );
 }
 
 function onwardOfferCost(offer: FlightOffer): number {
@@ -184,7 +185,7 @@ function onwardOfferCost(offer: FlightOffer): number {
 function selectSecondLeg(
   offers: FlightOffer[],
   onwardPolicy: OnwardFlightPolicy,
-): FlightOffer | undefined {
+): FlightOffer[] {
   return [...offers]
     .filter((offer) => onwardPolicy === "nonstop" ? offer.stops === 0 : offer.stops <= 2)
     .sort(
@@ -194,14 +195,30 @@ function selectSecondLeg(
         left.durationMinutes - right.durationMinutes ||
         left.stops - right.stops ||
         left.id.localeCompare(right.id),
-    )[0];
+    );
 }
 
 function createVerifiedRoute(
   hub: ValidatedHubCandidate,
-  firstLeg: FlightOffer,
-  secondLeg: FlightOffer,
+  firstLegs: FlightOffer[],
+  secondLegs: FlightOffer[],
+  arriveByDate?: string,
 ): VerifiedHubRoute | DetailedVerificationRejection {
+  const pair = firstLegs.flatMap((firstLeg) => secondLegs.map((secondLeg) => ({ firstLeg, secondLeg })))
+    .filter(({ firstLeg, secondLeg }) => hasMeaningfulStopover(firstLeg, secondLeg))
+    .filter(({ firstLeg, secondLeg }) => {
+      const stay = calculateHubStayNights(firstLeg, secondLeg);
+      return stay >= MIN_HUB_STAY_NIGHTS && stay <= MAX_HUB_STAY_NIGHTS && arrivesByDate(secondLeg, arriveByDate);
+    })
+    .sort((left, right) =>
+      onwardOfferCost(left.secondLeg) - onwardOfferCost(right.secondLeg) ||
+      left.firstLeg.indicativePrice.amount + left.secondLeg.indicativePrice.amount - right.firstLeg.indicativePrice.amount - right.secondLeg.indicativePrice.amount ||
+      left.firstLeg.id.localeCompare(right.firstLeg.id),
+    )[0];
+  if (!pair) {
+    return { airportCode: hub.airportCode, reason: "Detailed flight times do not fit a meaningful stopover within the arrival window." };
+  }
+  const { firstLeg, secondLeg } = pair;
   if (firstLeg.indicativePrice.currency !== secondLeg.indicativePrice.currency) {
     return {
       airportCode: hub.airportCode,
@@ -501,7 +518,7 @@ export async function verifyHubCandidates(
           loadLeg("first", origin, hub.airportCode, hub.firstLegDepartureDate),
           loadLeg("second", hub.airportCode, destination, hub.bestOnwardDate),
         ]);
-        const firstLeg = selectFirstLeg(
+        const firstLegs = selectFirstLeg(
           firstResult.value.filter((offer) =>
             isMatchingOffer(
               offer,
@@ -511,7 +528,7 @@ export async function verifyHubCandidates(
             ),
           ),
         );
-        if (!firstLeg) {
+        if (firstLegs.length === 0) {
           return {
             type: "rejected",
             airportCode: hub.airportCode,
@@ -523,7 +540,7 @@ export async function verifyHubCandidates(
           };
         }
 
-        const secondLeg = selectSecondLeg(
+        const secondLegs = selectSecondLeg(
           secondResult.value.filter((offer) =>
             isMatchingOffer(
               offer,
@@ -534,7 +551,7 @@ export async function verifyHubCandidates(
           ),
           hub.onwardPolicy,
         );
-        if (!secondLeg) {
+        if (secondLegs.length === 0) {
           return {
             type: "rejected",
             airportCode: hub.airportCode,
@@ -548,7 +565,7 @@ export async function verifyHubCandidates(
           };
         }
 
-        const route = createVerifiedRoute(hub, firstLeg, secondLeg);
+        const route = createVerifiedRoute(hub, firstLegs, secondLegs, input.arriveByDate);
         if (isRejection(route)) {
           return {
             type: "rejected",

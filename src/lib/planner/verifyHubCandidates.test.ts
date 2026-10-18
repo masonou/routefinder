@@ -102,7 +102,7 @@ test("verifies a two-leg route and replaces Calendar estimates with detailed pri
   assert.equal(route?.firstLeg.stops, 0);
   assert.equal(route?.secondLeg.stops, 1);
   assert.deepEqual(route?.totalPrice, { amount: 455, currency: "EUR" });
-  assert.equal(route?.hubStayNights, 4);
+  assert.equal(route?.hubStayNights, 3);
   assert.equal(route?.calendarEstimatedTotal, 300);
   assert.equal(route?.calendarDifference, 155);
 });

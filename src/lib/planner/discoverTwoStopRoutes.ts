@@ -42,7 +42,7 @@ import type {
 } from "../providers/types.ts";
 import { addCalendarDays, calendarDayDifference } from "../utils/dateWindow.ts";
 import { distanceKm, type Coordinates } from "../utils/geography.ts";
-import { isFlightWithinDepartureWindow, isReasonableFlight } from "./filters.ts";
+import { arrivesByDate, calculateHubStayNights, hasMeaningfulStopover, isFlightWithinDepartureWindow, isReasonableFlight } from "./filters.ts";
 import type { HubCandidate } from "./hubCandidates.ts";
 import type { DetailedOfferTrace } from "./verifyHubCandidates.ts";
 import { elapsedMs, nowMs, type RequestTiming } from "../instrumentation/searchTiming.ts";
@@ -157,6 +157,7 @@ export interface DiscoverTwoStopRoutesInput {
   observedConnections: Map<string, ObservedConnectionAirport[]>;
   reverseDestinationNetwork?: ReadonlySet<string> | Promise<ReadonlySet<string>>;
   targetResults: number;
+  arriveByDate?: string;
 }
 
 export interface DiscoverTwoStopRoutesDependencies {
@@ -225,13 +226,14 @@ function selectNonstopOffer(
     )[0];
 }
 
-function selectCalendarDate(arrivalDate: string, calendar: FlightCalendarDay[]): {
+function selectCalendarDate(arrivalDate: string, calendar: FlightCalendarDay[], arriveByDate?: string): {
   departureDate: string; stayNights: number;
 } | undefined {
   return calendar
     .filter((day) => day.hasFlights && day.price !== undefined && Number.isFinite(day.price))
     .map((day) => ({ departureDate: day.departureDate, stayNights: calendarDayDifference(arrivalDate, day.departureDate), price: day.price as number }))
     .filter((day) => day.stayNights >= MIN_TWO_STOP_STAY_NIGHTS && day.stayNights <= MAX_TWO_STOP_STAY_NIGHTS)
+    .filter((day) => !arriveByDate || day.departureDate <= arriveByDate)
     .sort((left, right) =>
       (left.price * (1 + Math.abs(left.stayNights - TARGET_TWO_STOP_STAY_NIGHTS) * 0.04)) -
         (right.price * (1 + Math.abs(right.stayNights - TARGET_TWO_STOP_STAY_NIGHTS) * 0.04)) ||
@@ -516,13 +518,16 @@ export async function discoverTwoStopRoutes(
     if (!prepared) return undefined;
     try {
       const middleCalendarStartedAt = nowMs();
+      const middleStart = addCalendarDays(prepared.h1ArrivalDate, MIN_TWO_STOP_STAY_NIGHTS);
+      const middleEnd = input.arriveByDate && input.arriveByDate < addCalendarDays(prepared.h1ArrivalDate, MAX_TWO_STOP_STAY_NIGHTS) ? input.arriveByDate : addCalendarDays(prepared.h1ArrivalDate, MAX_TWO_STOP_STAY_NIGHTS);
+      if (middleEnd < middleStart) return undefined;
       const middleCalendar = await runCachedFlightCalendar({
-        key: buildFlightCalendarCacheKey({ origin: h1.airportCode, destination: h2.airportCode, startDate: addCalendarDays(prepared.h1ArrivalDate, MIN_TWO_STOP_STAY_NIGHTS), endDate: addCalendarDays(prepared.h1ArrivalDate, MAX_TWO_STOP_STAY_NIGHTS), stopPolicy: "nonstop" }), cache: flightCalendarCache,
-        load: () => dependencies.flightCalendarProvider.getFlightCalendar({ origin: h1.airportCode, destination: h2.airportCode, departureWindow: { start: addCalendarDays(prepared.h1ArrivalDate, MIN_TWO_STOP_STAY_NIGHTS), end: addCalendarDays(prepared.h1ArrivalDate, MAX_TWO_STOP_STAY_NIGHTS) }, stopPolicy: "nonstop" }), warn,
+        key: buildFlightCalendarCacheKey({ origin: h1.airportCode, destination: h2.airportCode, startDate: middleStart, endDate: middleEnd, stopPolicy: "nonstop" }), cache: flightCalendarCache,
+        load: () => dependencies.flightCalendarProvider.getFlightCalendar({ origin: h1.airportCode, destination: h2.airportCode, departureWindow: { start: middleStart, end: middleEnd }, stopPolicy: "nonstop" }), warn,
       });
       twoStopCalendarWallMs += elapsedMs(middleCalendarStartedAt);
       recordStageCache("calendar", middleCalendar.cacheStatus, "middleCalendarCalls");
-      const middleDate = selectCalendarDate(prepared.h1ArrivalDate, middleCalendar.value);
+      const middleDate = selectCalendarDate(prepared.h1ArrivalDate, middleCalendar.value, input.arriveByDate);
       if (!middleDate) return undefined;
       const middleDetailedStartedAt = nowMs();
       const middleResult = await runCachedFlightOffers({
@@ -535,13 +540,16 @@ export async function discoverTwoStopRoutes(
       const h2ArrivalDate = middleLeg ? localDate(middleLeg.arrivalAt) : undefined;
       if (!middleLeg || !h2ArrivalDate) return undefined;
       const finalCalendarStartedAt = nowMs();
+      const finalStart = addCalendarDays(h2ArrivalDate, MIN_TWO_STOP_STAY_NIGHTS);
+      const finalEnd = input.arriveByDate && input.arriveByDate < addCalendarDays(h2ArrivalDate, MAX_TWO_STOP_STAY_NIGHTS) ? input.arriveByDate : addCalendarDays(h2ArrivalDate, MAX_TWO_STOP_STAY_NIGHTS);
+      if (finalEnd < finalStart) return undefined;
       const finalCalendar = await runCachedFlightCalendar({
-        key: buildFlightCalendarCacheKey({ origin: h2.airportCode, destination, startDate: addCalendarDays(h2ArrivalDate, MIN_TWO_STOP_STAY_NIGHTS), endDate: addCalendarDays(h2ArrivalDate, MAX_TWO_STOP_STAY_NIGHTS), stopPolicy: "nonstop" }), cache: flightCalendarCache,
-        load: () => dependencies.flightCalendarProvider.getFlightCalendar({ origin: h2.airportCode, destination, departureWindow: { start: addCalendarDays(h2ArrivalDate, MIN_TWO_STOP_STAY_NIGHTS), end: addCalendarDays(h2ArrivalDate, MAX_TWO_STOP_STAY_NIGHTS) }, stopPolicy: "nonstop" }), warn,
+        key: buildFlightCalendarCacheKey({ origin: h2.airportCode, destination, startDate: finalStart, endDate: finalEnd, stopPolicy: "nonstop" }), cache: flightCalendarCache,
+        load: () => dependencies.flightCalendarProvider.getFlightCalendar({ origin: h2.airportCode, destination, departureWindow: { start: finalStart, end: finalEnd }, stopPolicy: "nonstop" }), warn,
       });
       twoStopCalendarWallMs += elapsedMs(finalCalendarStartedAt);
       recordStageCache("calendar", finalCalendar.cacheStatus, "finalCalendarCalls");
-      const finalDate = selectCalendarDate(h2ArrivalDate, finalCalendar.value);
+      const finalDate = selectCalendarDate(h2ArrivalDate, finalCalendar.value, input.arriveByDate);
       if (!finalDate) return undefined;
       const finalDetailedStartedAt = nowMs();
       const finalResult = await runCachedFlightOffers({
@@ -551,10 +559,13 @@ export async function discoverTwoStopRoutes(
       twoStopDetailedWallMs += elapsedMs(finalDetailedStartedAt);
       recordStageCache("detailed", finalResult.cacheStatus, "finalDetailedCalls");
       const finalLeg = selectNonstopOffer(finalResult.value, h2.airportCode, destination, finalDate.departureDate);
-      if (!finalLeg) return undefined;
+      if (!finalLeg || !hasMeaningfulStopover(prepared.firstLeg, middleLeg) || !hasMeaningfulStopover(middleLeg, finalLeg) || !arrivesByDate(finalLeg, input.arriveByDate)) return undefined;
+      const h1StayNights = calculateHubStayNights(prepared.firstLeg, middleLeg);
+      const h2StayNights = calculateHubStayNights(middleLeg, finalLeg);
+      if (h1StayNights < MIN_TWO_STOP_STAY_NIGHTS || h1StayNights > MAX_TWO_STOP_STAY_NIGHTS || h2StayNights < MIN_TWO_STOP_STAY_NIGHTS || h2StayNights > MAX_TWO_STOP_STAY_NIGHTS) return undefined;
       const price = totalPrice([prepared.firstLeg, middleLeg, finalLeg]);
       if (!price) { failures.push(`${h1.airportCode} → ${h2.airportCode}: leg currencies differ.`); return undefined; }
-      const route: VerifiedTwoStopRoute = { h1, h2, firstLeg: prepared.firstLeg, middleLeg, finalLeg, h1StayNights: middleDate.stayNights, h2StayNights: finalDate.stayNights, totalPrice: price, totalDuration: prepared.firstLeg.durationMinutes + middleLeg.durationMinutes + finalLeg.durationMinutes, scoreBreakdown: { price: 0, duration: 0, stops: 0, detour: 0, stay: 0, final: 0 }, score: 0 };
+      const route: VerifiedTwoStopRoute = { h1, h2, firstLeg: prepared.firstLeg, middleLeg, finalLeg, h1StayNights, h2StayNights, totalPrice: price, totalDuration: prepared.firstLeg.durationMinutes + middleLeg.durationMinutes + finalLeg.durationMinutes, scoreBreakdown: { price: 0, duration: 0, stops: 0, detour: 0, stay: 0, final: 0 }, score: 0 };
       dependencies.onItineraryVerified?.(createItinerary({ origin, destination, score: route.score, legs: [
         { flight: route.firstLeg, stopoverAfter: { airportCode: route.h1.airportCode, city: route.h1.city, country: route.h1.country, nights: route.h1StayNights } },
         { flight: route.middleLeg, stopoverAfter: { airportCode: route.h2.airportCode, city: route.h2.city, country: route.h2.country, nights: route.h2StayNights } },

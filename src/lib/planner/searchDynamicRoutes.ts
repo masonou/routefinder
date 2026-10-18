@@ -46,8 +46,8 @@ import {
 } from "./verifyHubCandidates.ts";
 import { createItinerary, type Itinerary } from "../../types/itinerary.ts";
 import type { TripRequest } from "../../types/trip.ts";
-import { addCalendarDays, enumerateDateWindow } from "../utils/dateWindow.ts";
 import { discoverDirectItinerary } from "./discoverDirectRoute.ts";
+import { addCalendarDays, enumerateDateWindow } from "../utils/dateWindow.ts";
 import { FatalSearchStageError } from "./fatalStageFailure.ts";
 import { partitionOneStopAdventures } from "./adventurePortfolio.ts";
 import {
@@ -244,14 +244,11 @@ export async function verifyCandidatesUntilFilled(
 }
 
 export function getInitialDepartureDates(earliestDeparture: string): string[] {
-  return enumerateDateWindow({
-    start: earliestDeparture,
-    end: addCalendarDays(earliestDeparture, DEPARTURE_FLEX_DAYS),
-  });
+  return enumerateDateWindow({ start: earliestDeparture, end: addCalendarDays(earliestDeparture, DEPARTURE_FLEX_DAYS) });
 }
 
 export async function discoverFlexibleHubCandidates(
-  input: Pick<TripRequest, "origin" | "destination"> & { earliestDeparture: string },
+  input: Pick<TripRequest, "origin" | "destination"> & { earliestDeparture: string; arriveByDate?: string },
   dependencies: Pick<
     DynamicSearchDependencies,
     "directDestinationsProvider" | "directDestinationsCache" | "warn"
@@ -264,7 +261,9 @@ export async function discoverFlexibleHubCandidates(
       ? getDirectDestinationsCache()
       : dependencies.directDestinationsCache;
   const warn = dependencies.warn ?? console.warn;
-  const departureDates = getInitialDepartureDates(input.earliestDeparture);
+  // New requests are exact-date searches. The optional legacy path keeps
+  // internal callers written before the public contract source-compatible.
+  const departureDates = input.arriveByDate ? [input.earliestDeparture] : getInitialDepartureDates(input.earliestDeparture);
 
   const exploreStartedAt = nowMs();
   const exploreResults = await Promise.all(
@@ -374,14 +373,14 @@ export async function discoverFlexibleHubCandidates(
 }
 
 async function discoverReverseDestinationNetwork(
-  input: Pick<TripRequest, "destination"> & { earliestDeparture: string },
+  input: Pick<TripRequest, "destination"> & { earliestDeparture: string; arriveByDate?: string },
   dependencies: Pick<DynamicSearchDependencies, "directDestinationsProvider" | "directDestinationsCache" | "warn">,
 ): Promise<{ network: Set<string>; failures: number; timing: Pick<RequestTiming, "twoStopReverseExploreWallMs" | "twoStopReverseExploreRequests" | "twoStopReverseExploreLiveRequests" | "twoStopReverseExploreCacheHits" | "twoStopReverseExploreSucceededRequests" | "twoStopReverseExploreFailedRequests"> }> {
   const provider = dependencies.directDestinationsProvider ?? searchApiDirectDestinationsProvider;
   const cache = dependencies.directDestinationsCache === undefined ? getDirectDestinationsCache() : dependencies.directDestinationsCache;
   const warn = dependencies.warn ?? console.warn;
   const startedAt = nowMs();
-  const departureDates = getInitialDepartureDates(input.earliestDeparture);
+  const departureDates = input.arriveByDate ? [input.earliestDeparture] : getInitialDepartureDates(input.earliestDeparture);
   const results = await Promise.all(departureDates.map(async (departureDate) => {
     try {
       return await runCachedDirectDestinations({
@@ -457,7 +456,9 @@ export async function searchDynamicRoutePortfolio(
     {
       origin: request.origin,
       destination: request.destination,
-      earliestDeparture: request.departureWindow.start,
+      ...(request.arriveByDate
+        ? { departureDate: request.departureWindow.start, arriveByDate: request.arriveByDate }
+        : { earliestDeparture: request.departureWindow.start }),
       adults: request.adults,
     },
     {
@@ -475,6 +476,7 @@ export async function searchDynamicRoutePortfolio(
       origin: request.origin,
       destination: request.destination,
       earliestDeparture: request.departureWindow.start,
+      arriveByDate: request.arriveByDate,
     },
     {
       directDestinationsProvider: dependencies.directDestinationsProvider,
@@ -497,7 +499,7 @@ export async function searchDynamicRoutePortfolio(
 
   const cleanCalendarStartedAt = nowMs();
   const cleanValidation = await validateHubCandidates(
-    { candidates, destination: request.destination },
+    { candidates, destination: request.destination, arriveByDate: request.arriveByDate },
     flightCalendarProvider,
     { cache: dependencies.flightCalendarCache, warn, mode: "clean" },
   );
@@ -538,7 +540,7 @@ export async function searchDynamicRoutePortfolio(
   const fallbackCalendarStartedAt = nowMs();
   const fallbackValidation = remainingSlots > 0
     ? await validateHubCandidates(
-      { candidates: fallbackPool, destination: request.destination },
+      { candidates: fallbackPool, destination: request.destination, arriveByDate: request.arriveByDate },
       flightCalendarProvider,
       { cache: dependencies.flightCalendarCache, warn, mode: "fallback" },
     )
@@ -628,7 +630,7 @@ export async function searchDynamicRoutePortfolio(
           .filter((route) => route.onwardPolicy === "nonstop"),
       });
       const reverseNetworkPromise = discoverReverseDestinationNetwork(
-        { destination: request.destination, earliestDeparture: request.departureWindow.start },
+        { destination: request.destination, earliestDeparture: request.departureWindow.start, arriveByDate: request.arriveByDate },
         dependencies,
       );
       const result = await discoverTwoStopRoutes(
@@ -636,6 +638,7 @@ export async function searchDynamicRoutePortfolio(
           origin: request.origin,
           destination: request.destination,
           adults: request.adults ?? 1,
+          arriveByDate: request.arriveByDate,
           h1Candidates,
           observedConnections: observedConnectionsByH1(detailedTraces),
           reverseDestinationNetwork: reverseNetworkPromise.then((result) => result.network),

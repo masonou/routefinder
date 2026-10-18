@@ -2,8 +2,6 @@
 
 import { useId, useMemo, useState, type KeyboardEvent } from "react";
 
-import { addCalendarDays } from "@/lib/utils/dateWindow";
-import { getFlexibleDepartureDates } from "@/lib/utils/flexibleDepartureDates";
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTH_FORMATTER = new Intl.DateTimeFormat("en", {
@@ -15,11 +13,6 @@ const DATE_FORMATTER = new Intl.DateTimeFormat("en", {
   day: "numeric",
   month: "short",
   year: "numeric",
-  timeZone: "UTC",
-});
-const RANGE_FORMATTER = new Intl.DateTimeFormat("en", {
-  day: "numeric",
-  month: "short",
   timeZone: "UTC",
 });
 
@@ -59,26 +52,21 @@ function calendarDates(month: string): string[] {
   });
 }
 
-function dateRangeLabel(value: string): string {
-  if (!value) return "Choose earliest departure";
-  const end = addCalendarDays(value, 3);
-  return `${RANGE_FORMATTER.format(parseDate(value))}–${RANGE_FORMATTER.format(parseDate(end))}`;
-}
-
 export interface FlexibleDatePickerProps {
   value: string;
   onChange: (value: string) => void;
   error?: string;
+  label?: string;
+  minDate?: string;
 }
 
-export function FlexibleDatePicker({ value, onChange, error }: FlexibleDatePickerProps) {
+export function FlexibleDatePicker({ value, onChange, error, label = "Depart", minDate }: FlexibleDatePickerProps) {
   const dialogId = useId();
-  const today = formatDate(new Date());
+  const inputId = label === "Arrive by" ? "arrive-by" : "departure-date";
+  const today = minDate && minDate > formatDate(new Date()) ? minDate : formatDate(new Date());
   const [isOpen, setIsOpen] = useState(false);
   const [visibleMonth, setVisibleMonth] = useState(() => startOfMonth(value || today));
   const dates = useMemo(() => calendarDates(visibleMonth), [visibleMonth]);
-  const flexibleDates = value ? getFlexibleDepartureDates(value) : [];
-  const rangeEnd = flexibleDates.at(-1) ?? "";
 
   function selectDate(date: string) {
     onChange(date);
@@ -118,11 +106,11 @@ export function FlexibleDatePicker({ value, onChange, error }: FlexibleDatePicke
 
   return (
     <div className="relative min-w-0">
-      <label className="mb-2 block text-sm font-semibold text-slate-900" htmlFor="earliest-departure">
-        Earliest departure
+      <label className="mb-2 block text-sm font-semibold text-slate-900" htmlFor={inputId}>
+        {label}
       </label>
       <button
-        id="earliest-departure"
+        id={inputId}
         type="button"
         aria-haspopup="dialog"
         aria-expanded={isOpen}
@@ -137,7 +125,7 @@ export function FlexibleDatePicker({ value, onChange, error }: FlexibleDatePicke
         <span aria-hidden="true" className="text-slate-500">⌄</span>
       </button>
       <p id="departure-window-help" className="mt-2 text-sm text-slate-600">
-        {value ? `Searching ${dateRangeLabel(value)}.` : "We'll also search the next 3 days."}
+        {label === "Arrive by" ? "Latest destination arrival date." : "Your flight leaves on this date."}
       </p>
       {error ? <p id="dates-error" className="mt-2 text-sm text-red-700">{error}</p> : null}
 
@@ -163,7 +151,6 @@ export function FlexibleDatePicker({ value, onChange, error }: FlexibleDatePicke
           <div className="grid grid-cols-7 gap-y-1">
             {dates.map((date) => {
               const isSelected = date === value;
-              const isInRange = Boolean(value && date > value && date <= rangeEnd);
               const isCurrentMonth = date.slice(0, 7) === visibleMonth.slice(0, 7);
               const isPast = date < today;
               return (
@@ -174,14 +161,12 @@ export function FlexibleDatePicker({ value, onChange, error }: FlexibleDatePicke
                   disabled={isPast}
                   onClick={() => selectDate(date)}
                   onKeyDown={(event) => handleDayKeyDown(event, date)}
-                  aria-label={`${DATE_FORMATTER.format(parseDate(date))}${isSelected ? ", earliest departure" : isInRange ? ", included in flexible search" : ""}`}
+                  aria-label={`${DATE_FORMATTER.format(parseDate(date))}${isSelected ? `, ${label.toLowerCase()}` : ""}`}
                   aria-pressed={isSelected}
                   className={`mx-auto grid h-10 w-10 place-items-center rounded-md text-sm outline-none transition focus-visible:ring-2 focus-visible:ring-blue-700 disabled:cursor-not-allowed disabled:text-slate-300 ${
                     isSelected
                       ? "bg-blue-700 font-semibold text-white"
-                      : isInRange
-                        ? "w-full rounded-none bg-blue-100 font-medium text-blue-950"
-                        : isCurrentMonth
+                      : isCurrentMonth
                           ? "text-slate-900 hover:bg-slate-100"
                           : "text-slate-400 hover:bg-slate-100"
                   }`}
@@ -192,7 +177,7 @@ export function FlexibleDatePicker({ value, onChange, error }: FlexibleDatePicke
             })}
           </div>
           <p className="mt-3 border-t border-slate-100 pt-3 text-xs text-slate-600">
-            Select the first day. The lighter dates are automatically included.
+            {label === "Arrive by" ? "Choose the latest date you can arrive." : "Choose the date you leave."}
           </p>
         </div>
       ) : null}

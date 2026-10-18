@@ -22,12 +22,13 @@ function searchInput(overrides: Record<string, unknown> = {}): Record<string, un
     origin: "BNE",
     destination: "LCA",
     earliestDeparture: "2099-08-17",
+    arriveBy: "2099-08-22",
     adults: 1,
     ...overrides,
   };
 }
 
-test("public searches use dynamic discovery with the existing D through D+3 window", async () => {
+test("public searches use dynamic discovery with an exact departure date", async () => {
   let receivedRequest: TripRequest | undefined;
 
   const result = await runSearchRequest(searchRequest(searchInput()), {
@@ -41,8 +42,9 @@ test("public searches use dynamic discovery with the existing D through D+3 wind
   assert.equal(result.status, 200);
   assert.deepEqual(receivedRequest?.departureWindow, {
     start: "2099-08-17",
-    end: "2099-08-20",
+    end: "2099-08-17",
   });
+  assert.equal(receivedRequest?.arriveByDate, "2099-08-22");
   if (!("headers" in result)) {
     throw new Error("Expected cache headers on a successful result.");
   }

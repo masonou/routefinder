@@ -80,6 +80,8 @@ export interface ValidateHubCandidatesResult {
 export interface ValidateHubCandidatesInput {
   candidates: HubCandidate[];
   destination: string;
+  /** Calendar is only a cheap candidate filter; detailed offers are authoritative. */
+  arriveByDate?: string;
 }
 
 export interface ValidateHubCandidatesOptions {
@@ -310,11 +312,14 @@ export async function validateHubCandidates(
     candidates: HubCandidate[],
     onwardPolicy: OnwardFlightPolicy,
   ): Promise<{ outcomes: CandidateValidationOutcome[]; concurrency: ProviderPoolMetrics }> => {
-    const pendingCandidates: PendingCandidate[] = candidates.map((candidate) => ({
-      candidate,
-      startDate: addCalendarDays(candidate.firstLegDepartureDate, MIN_HUB_STAY_NIGHTS),
-      endDate: addCalendarDays(candidate.firstLegDepartureDate, MAX_HUB_STAY_NIGHTS),
-    }));
+    const pendingCandidates: PendingCandidate[] = candidates.flatMap((candidate) => {
+      const startDate = addCalendarDays(candidate.firstLegDepartureDate, MIN_HUB_STAY_NIGHTS);
+      const normalEnd = addCalendarDays(candidate.firstLegDepartureDate, MAX_HUB_STAY_NIGHTS);
+      const endDate = input.arriveByDate && input.arriveByDate < normalEnd
+        ? input.arriveByDate
+        : normalEnd;
+      return endDate < startDate ? [] : [{ candidate, startDate, endDate }];
+    });
     const stopPolicy =
       onwardPolicy === "nonstop" ? "nonstop" : "two_stops_or_fewer";
 

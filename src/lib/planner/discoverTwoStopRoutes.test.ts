@@ -324,7 +324,7 @@ test("three verified nonstop legs produce retained generic two-stop itineraries 
   assert.equal(result.itineraries.length, 3);
   const itinerary = result.itineraries[0];
   assert.equal(itinerary?.legs.length, 3);
-  assert.deepEqual(itinerary?.legs.map((leg) => leg.stopoverAfter?.nights), [3, 3, undefined]);
+  assert.deepEqual(itinerary?.legs.map((leg) => leg.stopoverAfter?.nights), [2, 2, undefined]);
   assert.equal(itinerary?.totalStops, 0);
   assert.equal(itinerary?.totalPrice.amount, 300);
   assert.equal(new Set(result.itineraries.map((entry) => entry.legs[1]?.flight.destination)).size, 3);

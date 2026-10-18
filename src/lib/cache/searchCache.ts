@@ -21,6 +21,7 @@ interface SearchCacheKeyInput {
   origin: string;
   destination: string;
   earliestDeparture: string;
+  arriveBy?: string;
   adults: number;
   forceTwoStop?: boolean;
 }
@@ -44,10 +45,11 @@ function isSearchCacheValue(value: unknown): value is SearchCacheValue {
 
 export function buildSearchCacheKey(input: SearchCacheKeyInput): string {
   return [
-    "routefinder:search:v18-hybrid-two-stop",
+    "routefinder:search:v19-arrive-by",
     input.origin.trim().toUpperCase(),
     input.destination.trim().toUpperCase(),
     input.earliestDeparture,
+    input.arriveBy ?? input.earliestDeparture,
     String(Math.trunc(input.adults)),
     "dynamic",
     input.forceTwoStop === true ? "force-two-stop" : "normal",

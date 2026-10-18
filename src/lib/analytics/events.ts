@@ -8,6 +8,8 @@ import type {
 type SearchEventProperties = {
   origin: string;
   destination: string;
+  departureDate?: string;
+  arriveByDate?: string;
 };
 
 type AffiliateClickProperties = SearchEventProperties & {
@@ -43,8 +45,13 @@ function capture(
 export function trackSearchSubmitted({
   origin,
   destination,
+  departureDate,
+  arriveByDate,
 }: SearchEventProperties) {
-  capture("search_submitted", { origin, destination });
+  const journeyWindowDays = departureDate && arriveByDate
+    ? Math.round((Date.parse(`${arriveByDate}T00:00:00Z`) - Date.parse(`${departureDate}T00:00:00Z`)) / 86_400_000)
+    : undefined;
+  capture("search_submitted", { origin, destination, ...(departureDate ? { departure_date: departureDate } : {}), ...(arriveByDate ? { arrive_by_date: arriveByDate } : {}), ...(journeyWindowDays === undefined ? {} : { journey_window_days: journeyWindowDays }) });
 }
 
 export function trackFirstResultRendered({

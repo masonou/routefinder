@@ -18,6 +18,7 @@ const INITIAL_VALUES: SearchFormValues = {
   origin: "",
   destination: "",
   earliestDeparture: "",
+  arriveBy: "",
 };
 
 function hasErrors(errors: SearchFormErrors): boolean {
@@ -50,6 +51,9 @@ export function SearchForm({ initialValues = INITIAL_VALUES }: SearchFormProps) 
   function updateDate(value: string) {
     setValues((current) => ({ ...current, earliestDeparture: value }));
   }
+  function updateArriveBy(value: string) {
+    setValues((current) => ({ ...current, arriveBy: value }));
+  }
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -60,6 +64,8 @@ export function SearchForm({ initialValues = INITIAL_VALUES }: SearchFormProps) 
       trackSearchSubmitted({
         origin: values.origin,
         destination: values.destination,
+        departureDate: values.earliestDeparture,
+        arriveByDate: values.arriveBy,
       });
       router.push(buildResultsUrl(values));
     }
@@ -78,7 +84,7 @@ export function SearchForm({ initialValues = INITIAL_VALUES }: SearchFormProps) 
         />
         One-way journey
       </div>
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(13rem,1fr)_minmax(10rem,auto)] lg:gap-5">
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(11rem,1fr)_minmax(11rem,1fr)_minmax(10rem,auto)] lg:gap-5">
         <AirportAutocomplete
           id="origin"
           label="From"
@@ -105,6 +111,14 @@ export function SearchForm({ initialValues = INITIAL_VALUES }: SearchFormProps) 
           value={values.earliestDeparture}
           onChange={updateDate}
           error={errors.dates}
+          label="Depart"
+        />
+        <FlexibleDatePicker
+          value={values.arriveBy ?? ""}
+          onChange={updateArriveBy}
+          error={errors.dates}
+          label="Arrive by"
+          minDate={values.earliestDeparture || undefined}
         />
         <button
           type="submit"

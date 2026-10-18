@@ -2,6 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  arrivesByDate,
+  calculateHubStayHours,
   calculateHubStayNights,
   isReasonableFlight,
 } from "./filters.ts";
@@ -36,7 +38,7 @@ function createFlightOffer(overrides: Partial<FlightOffer>): FlightOffer {
   };
 }
 
-test("calculateHubStayNights counts local calendar nights between arrival and departure dates", () => {
+test("calculateHubStayNights counts completed 24-hour periods from timestamps", () => {
   const firstLeg = createFlightOffer({
     destination: "BKK",
     arrivalAt: "2026-09-10T10:05:00",
@@ -46,7 +48,7 @@ test("calculateHubStayNights counts local calendar nights between arrival and de
     departureAt: "2026-09-13T09:17:00",
   });
 
-  assert.equal(calculateHubStayNights(firstLeg, secondLeg), 3);
+  assert.equal(calculateHubStayNights(firstLeg, secondLeg), 2);
 });
 
 test("calculateHubStayNights returns -1 for same-day departure", () => {
@@ -88,7 +90,7 @@ test("calculateHubStayNights returns -1 for malformed timestamps", () => {
   assert.equal(calculateHubStayNights(firstLeg, secondLeg), -1);
 });
 
-test("calculateHubStayNights returns 2 for a two-night stay", () => {
+test("calculateHubStayNights rounds down elapsed time rather than calendar labels", () => {
   const firstLeg = createFlightOffer({
     destination: "BKK",
     arrivalAt: "2026-09-10T22:30:00",
@@ -98,7 +100,20 @@ test("calculateHubStayNights returns 2 for a two-night stay", () => {
     departureAt: "2026-09-12T06:00:00",
   });
 
-  assert.equal(calculateHubStayNights(firstLeg, secondLeg), 2);
+  assert.equal(calculateHubStayNights(firstLeg, secondLeg), 1);
+});
+
+test("stopover duration uses real timestamps, not just the calendar dates", () => {
+  const firstLeg = createFlightOffer({ destination: "BKK", arrivalAt: "2026-09-10T23:30:00" });
+  const secondLeg = createFlightOffer({ origin: "BKK", departureAt: "2026-09-12T01:00:00" });
+  assert.equal(calculateHubStayHours(firstLeg, secondLeg), 25.5);
+  assert.equal(calculateHubStayNights(firstLeg, secondLeg), 1);
+});
+
+test("destination-local arrival date enforces arrive-by, including overnight flights", () => {
+  const flight = createFlightOffer({ arrivalAt: "2026-09-14T00:20:00" });
+  assert.equal(arrivesByDate(flight, "2026-09-13"), false);
+  assert.equal(arrivesByDate(flight, "2026-09-14"), true);
 });
 
 test("accepts valid long-haul offers whose destination-local arrival clock is earlier", () => {

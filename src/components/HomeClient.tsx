@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 import type { SearchFormValues } from "@/lib/utils/searchValidation";
+import { addCalendarDays } from "@/lib/utils/dateWindow";
 import { SearchForm } from "./SearchForm";
 
 interface JourneyExample {
@@ -47,6 +48,7 @@ export function HomeClient() {
       origin: example.originCode,
       destination: example.destinationCode,
       earliestDeparture: exampleDepartureDate(),
+      arriveBy: addCalendarDays(exampleDepartureDate(), 6),
     });
 
     window.requestAnimationFrame(() => {
@@ -76,7 +78,7 @@ export function HomeClient() {
               <SearchForm
                 key={
                   formValues
-                    ? `${formValues.origin}-${formValues.destination}-${formValues.earliestDeparture}`
+                    ? `${formValues.origin}-${formValues.destination}-${formValues.earliestDeparture}-${formValues.arriveBy}`
                     : "empty"
                 }
                 initialValues={formValues ?? undefined}

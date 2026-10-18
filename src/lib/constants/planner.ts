@@ -2,6 +2,11 @@
 export const MIN_HUB_STAY_NIGHTS = 2;
 export const MAX_HUB_STAY_NIGHTS = 6;
 export const TARGET_HUB_STAY_NIGHTS = 4;
+// A journey window is deliberately bounded so a search remains an intentional
+// layover journey rather than open-ended trip planning.
+export const MAX_JOURNEY_WINDOW_DAYS = 14;
+/** @deprecated Public searches are exact-date; retained for compatibility helpers. */
+export const DEPARTURE_FLEX_DAYS = 3;
 
 // Candidate-generation tuning. These are intentionally separate from live
 // itinerary planning until candidate quality has been evaluated.
@@ -45,7 +50,5 @@ export const EXTREME_DURATION_REQUIRED_SAVINGS_RATIO = 0.22;
 
 // V1 searches the selected date plus three calendar days to balance useful flexibility
 // with live API cost. This can become a product setting later.
-export const DEPARTURE_FLEX_DAYS = 3;
-
 export const MAX_LEG_DURATION_MINUTES = 60 * 60;
 export const MAX_STOPS_PER_LEG = 3;
