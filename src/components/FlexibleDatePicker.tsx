@@ -162,7 +162,7 @@ export function FlexibleDatePicker({
           onKeyDown={(event) => {
             if (event.key === "Escape") setIsOpen(false);
           }}
-          className="absolute z-30 mt-2 w-full min-w-[min(100%,22rem)] border border-slate-200 bg-white p-3 shadow-xl sm:w-[22rem] sm:p-4"
+          className="absolute z-30 mt-2 w-full min-w-[min(100%,22rem)] border border-slate-200 bg-white p-3 shadow-xl sm:w-88 sm:p-4"
         >
           <div className="mb-4 flex items-center justify-between">
             <button
