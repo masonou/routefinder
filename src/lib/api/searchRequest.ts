@@ -92,6 +92,7 @@ export async function runSearchRequest(
             count: result.length,
             itineraries: result,
             twoStopDiscovery: { explored: false, canExplore: false, reason: "unavailable" },
+            outcome: result.length > 0 ? "success" : "no_stopover_within_window",
           };
         }
         return result;

@@ -372,6 +372,103 @@ test("maps only nonstop Explore destinations and safely skips malformed entries"
   assert.equal(requestedAuthorization, "Bearer searchapi_test_secret");
 });
 
+test("retries one transient Explore timeout once and records the retry", async () => {
+  let calls = 0;
+  const timings: Array<{ retryAttempt: number }> = [];
+  const provider = createSearchApiFlightProvider({
+    apiKey: "searchapi_test_secret",
+    timeoutMs: 10,
+    diagnostics: { onRequestTiming: (timing) => timings.push(timing) },
+    fetch: async () => {
+      calls += 1;
+      if (calls === 1) throw new DOMException("timeout", "AbortError");
+      return jsonResponse({ destinations: [] });
+    },
+  });
+  assert.deepEqual(await provider.getDirectDestinations({ origin: "MGC", departureDate: "2027-02-10" }), []);
+  assert.equal(calls, 2);
+  assert.deepEqual(timings.map((timing) => timing.retryAttempt), [0, 1]);
+});
+
+test("an Explore timeout after its retry remains a provider failure", async () => {
+  let calls = 0;
+  const provider = createSearchApiFlightProvider({
+    apiKey: "searchapi_test_secret",
+    fetch: async () => {
+      calls += 1;
+      throw new DOMException("timeout", "AbortError");
+    },
+  });
+  await assert.rejects(
+    () => provider.getDirectDestinations({ origin: "MGC", departureDate: "2027-02-10" }),
+    /timed out/,
+  );
+  assert.equal(calls, 2);
+});
+
+test("does not retry non-retryable Explore schema failures", async () => {
+  let calls = 0;
+  const provider = createSearchApiFlightProvider({
+    apiKey: "searchapi_test_secret",
+    fetch: async () => {
+      calls += 1;
+      return jsonResponse({ unexpected: true });
+    },
+  });
+  await assert.rejects(
+    () => provider.getDirectDestinations({ origin: "MGC", departureDate: "2027-02-10" }),
+    /unexpected response/,
+  );
+  assert.equal(calls, 1);
+});
+
+test("recognizes valid empty Explore responses but preserves malformed destination payloads", async () => {
+  let trace: import("./searchApi.ts").SearchApiExploreTrace | undefined;
+  const emptyProvider = createSearchApiFlightProvider({
+    apiKey: "searchapi_test_secret",
+    diagnostics: { onExploreTrace: (entry) => { trace = entry; } },
+    fetch: async () => jsonResponse({
+      search_metadata: { status: "Success" },
+      search_parameters: { engine: "google_travel_explore", departure_id: "MGC" },
+      error: "Google Travel Explore API didn't return any results.",
+    }),
+  });
+  assert.deepEqual(await emptyProvider.getDirectDestinations({ origin: "MGC", departureDate: "2027-02-10" }), []);
+  assert.deepEqual(trace && {
+    outcome: trace.outcome,
+    destinations: trace.destinations,
+    rawDestinations: trace.rawDestinations,
+    metadataStatus: trace.metadataStatus,
+    searchParametersKeys: trace.searchParametersKeys,
+  }, {
+    outcome: "empty",
+    destinations: "missing",
+    rawDestinations: 0,
+    metadataStatus: "Success",
+    searchParametersKeys: ["departure_id", "engine"],
+  });
+  const malformedProvider = createSearchApiFlightProvider({
+    apiKey: "searchapi_test_secret",
+    fetch: async () => jsonResponse({ destinations: [{ flight: { stops: 0 } }] }),
+  });
+  await assert.rejects(
+    () => malformedProvider.getDirectDestinations({ origin: "MGC", departureDate: "2027-02-10" }),
+    /without usable flight data/,
+  );
+});
+
+test("recognizes a successful detailed no-results marker as an empty flight list", async () => {
+  const provider = createSearchApiFlightProvider({
+    apiKey: "searchapi_test_secret",
+    fetch: async () => jsonResponse({
+      search_metadata: { status: "Success" },
+      search_parameters: { engine: "google_flights" },
+      error: "Google Flights API didn't return any results.",
+    }),
+  });
+  assert.deepEqual(await provider.searchOneWay(sampleInput), []);
+});
+
 test("maps one-way Calendar dates without leaking raw SearchAPI entries", async () => {
   let requestedUrl = "";
   const provider = createSearchApiFlightProvider({

@@ -467,6 +467,49 @@ test("dynamic orchestration returns no results when Explore finds no viable cand
   assert.equal(calendarCalls, 1);
 });
 
+test("completed empty searches expose the correct domain outcome", async () => {
+  const exactRequest: TripRequest = {
+    ...request,
+    departureWindow: { start: "2026-09-01", end: "2026-09-01" },
+    arriveByDate: "2026-09-08",
+  };
+  const noFlights = await searchDynamicRoutePortfolio(exactRequest, {}, {
+    directDestinationsCache: null,
+    flightOffersCache: null,
+    directDestinationsProvider: { async getDirectDestinations() { return []; } },
+    flightProvider: { name: "test", async searchOneWay() { return []; } },
+  });
+  assert.equal(noFlights.outcome, "no_usable_origin_flights");
+
+  const noStopover = await searchDynamicRoutePortfolio(exactRequest, {}, {
+    directDestinationsCache: null,
+    flightCalendarCache: null,
+    flightOffersCache: null,
+    directDestinationsProvider: {
+      async getDirectDestinations(input) {
+        return exploredDestinations.map((entry) => ({ ...entry, outboundDate: input.departureDate }));
+      },
+    },
+    flightCalendarProvider: { async getFlightCalendar() { return []; } },
+    flightProvider: { name: "test", async searchOneWay() { return []; } },
+  });
+  assert.equal(noStopover.outcome, "no_stopover_within_window");
+
+  const directOnly = await searchDynamicRoutePortfolio(exactRequest, {}, {
+    directDestinationsCache: null,
+    flightOffersCache: null,
+    directDestinationsProvider: { async getDirectDestinations() { return []; } },
+    flightProvider: {
+      name: "test",
+      async searchOneWay(input) {
+        return [offer("direct-only", input.origin, input.destination, "2026-09-01", 400, 720)];
+      },
+    },
+  });
+  assert.equal(directOnly.outcome, "direct_only");
+  assert.equal(directOnly.itineraries.length, 1);
+});
+
 test("a valid direct baseline is returned when adventure discovery finds no candidates", async () => {
   const result = await searchDynamicRoutes(request, {
     directDestinationsCache: null,

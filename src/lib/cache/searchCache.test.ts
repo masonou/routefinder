@@ -15,12 +15,14 @@ const resultWithItineraries: SearchCacheValue = {
   count: 1,
   itineraries: [{} as Itinerary],
   twoStopDiscovery: { explored: false, canExplore: false, reason: "unavailable" },
+  outcome: "success",
 };
 
 const emptyResult: SearchCacheValue = {
   count: 0,
   itineraries: [],
   twoStopDiscovery: { explored: false, canExplore: false, reason: "unavailable" },
+  outcome: "no_stopover_within_window",
 };
 
 test("identical normalized searches use the same versioned cache key", () => {
@@ -39,7 +41,7 @@ test("identical normalized searches use the same versioned cache key", () => {
     adults: 1,
   });
 
-  assert.equal(firstKey, "routefinder:search:v19-arrive-by:BNE:LCA:2026-08-17:2026-08-22:1:dynamic:normal");
+  assert.equal(firstKey, "routefinder:search:v20-outcomes:BNE:LCA:2026-08-17:2026-08-22:1:dynamic:normal");
   assert.equal(firstKey, secondKey);
 });
 

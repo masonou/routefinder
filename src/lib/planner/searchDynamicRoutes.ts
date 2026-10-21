@@ -47,7 +47,7 @@ import {
 import { createItinerary, type Itinerary } from "../../types/itinerary.ts";
 import type { TripRequest } from "../../types/trip.ts";
 import { discoverDirectItinerary } from "./discoverDirectRoute.ts";
-import { addCalendarDays, enumerateDateWindow } from "../utils/dateWindow.ts";
+import { addCalendarDays, calendarDayDifference, enumerateDateWindow } from "../utils/dateWindow.ts";
 import { FatalSearchStageError } from "./fatalStageFailure.ts";
 import { partitionOneStopAdventures } from "./adventurePortfolio.ts";
 import {
@@ -137,6 +137,18 @@ export function appendDirectBaseline(
   if (!directItinerary) return adventures;
   // The reference route never competes with or displaces an adventure.
   return [directItinerary, ...adventures];
+}
+
+function completedOutcome(
+  directItinerary: Itinerary | undefined,
+  adventureCount: number,
+  originHadUsableFlights: boolean,
+): DynamicSearchResult["outcome"] {
+  if (adventureCount > 0) return "success";
+  if (directItinerary) return "direct_only";
+  return originHadUsableFlights
+    ? "no_stopover_within_window"
+    : "no_usable_origin_flights";
 }
 
 export function orderAdventureItineraries(routes: VerifiedHubRoute[]): Itinerary[] {
@@ -493,6 +505,13 @@ export async function searchDynamicRoutePortfolio(
       count: itineraries.length,
       itineraries,
       twoStopDiscovery: twoStopUnavailableForDistance(directDistanceKm),
+      outcome: completedOutcome(
+        directItinerary,
+        0,
+        discovery.exploreResults.some(
+          (result) => (result.directDestinationCount ?? 0) > 0,
+        ),
+      ),
       timing: refreshProviderCounts(applyDirectTiming(timing, directTiming)),
     };
   }
@@ -607,6 +626,9 @@ export async function searchDynamicRoutePortfolio(
   const twoStopEligibility = shouldExploreTwoStopovers({
     directDistanceKm,
     cleanOneStopAdventureCount: oneStopPortfolio.clean.length,
+    ...(request.arriveByDate
+      ? { journeyWindowDays: calendarDayDifference(request.departureWindow.start, request.arriveByDate) }
+      : {}),
   });
   const forcePortfolioFull = options.forceTwoStop === true &&
     twoStopEligibility.reason === "portfolio_full";
@@ -615,7 +637,7 @@ export async function searchDynamicRoutePortfolio(
     ? { explored: true, canExplore: false, reason: "already_explored" }
     : twoStopEligibility.reason === "portfolio_full"
       ? { explored: false, canExplore: true, reason: "portfolio_full" }
-      : { explored: false, canExplore: false, reason: "route_too_short" };
+      : { explored: false, canExplore: false, reason: twoStopEligibility.reason === "insufficient_journey_window" ? "insufficient_journey_window" : "route_too_short" };
   let twoStopAdventures: Itinerary[] = [];
   if (shouldRunTwoStopDiscovery) {
     timing.twoStopTriggered = true;
@@ -693,7 +715,17 @@ export async function searchDynamicRoutePortfolio(
     [...oneStopAdventures, ...twoStopAdventures],
     directItinerary,
   );
-  return { count: itineraries.length, itineraries, twoStopDiscovery, timing };
+  return {
+    count: itineraries.length,
+    itineraries,
+    twoStopDiscovery,
+    outcome: completedOutcome(
+      directItinerary,
+      oneStopAdventures.length + twoStopAdventures.length,
+      true,
+    ),
+    timing,
+  };
 }
 
 function prefixCounts(prefix: "cleanCalendar" | "cleanDetailed" | "fallbackCalendar" | "fallbackDetailed", counts: ReturnType<typeof countCacheStatuses>) {

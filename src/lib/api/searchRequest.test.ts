@@ -53,6 +53,7 @@ test("public searches use dynamic discovery with an exact departure date", async
     count: 0,
     itineraries: [],
     twoStopDiscovery: { explored: false, canExplore: false, reason: "unavailable" },
+    outcome: "no_stopover_within_window",
   });
 });
 
@@ -65,6 +66,7 @@ test("a cache hit returns cached data without invoking dynamic discovery", async
         count: 1,
         itineraries: cachedItineraries,
         twoStopDiscovery: { explored: false, canExplore: false, reason: "unavailable" },
+        outcome: "success",
       };
     },
     async set() {
@@ -90,6 +92,7 @@ test("a cache hit returns cached data without invoking dynamic discovery", async
     count: 1,
     itineraries: cachedItineraries,
     twoStopDiscovery: { explored: false, canExplore: false, reason: "unavailable" },
+    outcome: "success",
   });
 });
 
@@ -104,6 +107,7 @@ test("debug timing reports a high-level cache hit with no provider work", async 
             count: 0,
             itineraries: [],
             twoStopDiscovery: { explored: false, canExplore: false, reason: "unavailable" },
+            outcome: "no_stopover_within_window",
           };
         },
         async set() {},
@@ -159,6 +163,7 @@ test("client cancellation cannot turn a verified forced two-stop itinerary into 
           count: 1,
           itineraries: [itinerary],
           twoStopDiscovery: { explored: true, canExplore: false, reason: "already_explored" },
+          outcome: "success",
         };
       },
     },
@@ -180,6 +185,7 @@ test("forced two-stop requests are passed as a bounded planner option", async ()
         count: 0,
         itineraries: [],
         twoStopDiscovery: { explored: true, canExplore: false, reason: "already_explored" },
+        outcome: "no_stopover_within_window",
       };
     },
   });
@@ -209,6 +215,7 @@ test("normal and forced responses do not collide in the high-level cache", async
       twoStopDiscovery: options.forceTwoStop
         ? { explored: true as const, canExplore: false as const, reason: "already_explored" as const }
         : { explored: false as const, canExplore: true as const, reason: "portfolio_full" as const },
+      outcome: "no_stopover_within_window" as const,
     };
   };
 
@@ -244,6 +251,7 @@ test("dynamic discovery is unconditional", async () => {
     count: 1,
     itineraries: [dynamicItinerary],
     twoStopDiscovery: { explored: false, canExplore: false, reason: "unavailable" },
+    outcome: "success",
   });
 });
 
@@ -260,6 +268,7 @@ test("dynamic no-results and provider failures retain public API behaviour", asy
       count: 0,
       itineraries: [],
       twoStopDiscovery: { explored: false, canExplore: false, reason: "unavailable" },
+      outcome: "no_stopover_within_window",
     },
     headers: { "X-Routefinder-Cache": "MISS" },
   });

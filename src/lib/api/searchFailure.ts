@@ -81,7 +81,7 @@ function classifyProviderFailure(
     /authentication failed|SEARCHAPI_API_KEY is not configured/i.test(normalized.message)
   ) {
     failureCode = "SL-PROVIDER-AUTH";
-  } else if (/invalid JSON|unexpected response/i.test(normalized.message)) {
+  } else if (/invalid JSON|unexpected response|without usable flight data/i.test(normalized.message)) {
     failureCode = "SL-PROVIDER-INVALID-RESPONSE";
   } else if (
     (normalized.status !== undefined && normalized.status >= 500) ||

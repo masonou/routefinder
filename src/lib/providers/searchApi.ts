@@ -60,6 +60,20 @@ export interface SearchApiRequestTiming {
   durationMs: number;
   status?: number;
   success: boolean;
+  retryAttempt: 0 | 1;
+}
+
+export interface SearchApiExploreTrace {
+  request: Record<string, string>;
+  status: number;
+  responseKeys: string[];
+  destinations: "missing" | "array" | "other";
+  rawDestinations: number;
+  mappedDestinations: DirectDestination[];
+  outcome: "results" | "empty" | "invalid";
+  providerMessage?: string;
+  metadataStatus?: string;
+  searchParametersKeys: string[];
 }
 
 // Optional and used only by the debug command. These hooks observe the same
@@ -67,6 +81,7 @@ export interface SearchApiRequestTiming {
 export interface SearchApiDiagnosticHooks {
   onCalendarTrace?: (trace: SearchApiCalendarTrace) => void;
   onDetailedTrace?: (trace: SearchApiDetailedTrace) => void;
+  onExploreTrace?: (trace: SearchApiExploreTrace) => void;
   onRequestTiming?: (timing: SearchApiRequestTiming) => void;
 }
 
@@ -511,9 +526,111 @@ function deduplicateDirectDestinations(
   return Array.from(unique.values());
 }
 
-async function fetchDirectDestinations(
+function isRecognizedEmptyExploreResponse(body: RecordValue): boolean {
+  if (Array.isArray(body.destinations) && body.destinations.length === 0) return true;
+  const information = isRecord(body.search_information) ? body.search_information : undefined;
+  return information?.no_results_found === true || information?.no_results === true ||
+    body.no_results_found === true || body.no_routes === true ||
+    hasSuccessfulSearchApiNoResultsMessage(body, "google_travel_explore");
+}
+
+function isRecognizedEmptyFlightResponse(body: RecordValue): boolean {
+  const information = isRecord(body.search_information)
+    ? body.search_information
+    : undefined;
+  return information?.no_results_found === true || information?.no_results === true ||
+    body.no_results_found === true || body.no_flights === true ||
+    hasSuccessfulSearchApiNoResultsMessage(body);
+}
+
+function hasSuccessfulSearchApiNoResultsMessage(
+  body: RecordValue,
+  expectedEngine?: string,
+): boolean {
+  const metadata = isRecord(body.search_metadata) ? body.search_metadata : undefined;
+  const parameters = isRecord(body.search_parameters) ? body.search_parameters : undefined;
+  const status = getNonEmptyString(metadata ?? {}, "status");
+  const engine = getNonEmptyString(parameters ?? {}, "engine");
+  const message = [body.error, body.message, body.error_message]
+    .map(sanitizeProviderMessage)
+    .find((value): value is string => value !== undefined);
+  return status?.toLowerCase() === "success" &&
+    (!expectedEngine || engine === expectedEngine) &&
+    message !== undefined &&
+    /\b(?:no|didn['’]?t|did not)\b[^.]{0,80}\bresult(?:s)?\b/i.test(message);
+}
+
+function sanitizeProviderMessage(value: unknown): string | undefined {
+  if (typeof value !== "string" || !value.trim()) return undefined;
+  return redactSensitiveDetails(value)
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 240);
+}
+
+function exploreResponseTrace(
+  query: URLSearchParams,
+  status: number,
+  body: RecordValue | undefined,
+  outcome: SearchApiExploreTrace["outcome"],
+  mappedDestinations: DirectDestination[] = [],
+): SearchApiExploreTrace {
+  const destinations = body?.destinations;
+  const metadata = body && isRecord(body.search_metadata)
+    ? body.search_metadata
+    : undefined;
+  const parameters = body && isRecord(body.search_parameters)
+    ? body.search_parameters
+    : undefined;
+  const providerMessage = body && ["error", "message", "error_message"]
+    .map((key) => sanitizeProviderMessage(body[key]))
+    .find((message): message is string => message !== undefined);
+  return {
+    request: queryRecord(query),
+    status,
+    responseKeys: body ? Object.keys(body).sort() : [],
+    destinations: destinations === undefined
+      ? "missing"
+      : Array.isArray(destinations)
+        ? "array"
+        : "other",
+    rawDestinations: Array.isArray(destinations) ? destinations.length : 0,
+    mappedDestinations,
+    outcome,
+    ...(providerMessage ? { providerMessage } : {}),
+    ...(sanitizeProviderMessage(metadata?.status)
+      ? { metadataStatus: sanitizeProviderMessage(metadata?.status) }
+      : {}),
+    searchParametersKeys: parameters ? Object.keys(parameters).sort() : [],
+  };
+}
+
+function logInvalidExploreResponse(trace: SearchApiExploreTrace): void {
+  // Structural diagnostics let us distinguish a valid zero-result response
+  // from a provider contract change without logging credentials or full data.
+  console.warn("[searchapi] INVALID EXPLORE RESPONSE", JSON.stringify({
+    route: trace.request.departure_id,
+    date: trace.request.time_period,
+    status: trace.status,
+    topLevelKeys: trace.responseKeys,
+    destinations: trace.destinations,
+    destinationsLength: trace.rawDestinations,
+    ...(trace.providerMessage ? { providerMessage: trace.providerMessage } : {}),
+    ...(trace.metadataStatus ? { metadataStatus: trace.metadataStatus } : {}),
+    searchParametersKeys: trace.searchParametersKeys,
+  }));
+}
+
+async function pauseForRetry(): Promise<void> {
+  // A short fixed delay keeps retry cost predictable and gives a transient
+  // upstream timeout/rate-limit a chance to clear without holding a request long.
+  await new Promise<void>((resolve) => setTimeout(resolve, 250));
+}
+
+async function fetchDirectDestinationsOnce(
   input: DirectDestinationsInput,
   options: ResolvedSearchApiOptions,
+  retryAttempt: 0 | 1,
 ): Promise<DirectDestination[]> {
   const query = new URLSearchParams({
     engine: "google_travel_explore",
@@ -532,7 +649,7 @@ async function fetchDirectDestinations(
       method: "GET",
       headers: { Authorization: `Bearer ${options.apiKey}` },
       signal: controller.signal,
-    });
+    }, retryAttempt);
   } catch (error) {
     if (isTimeoutError(error) || controller.signal.aborted) {
       throw new SearchApiError("SearchAPI request timed out.", {
@@ -572,20 +689,68 @@ async function fetchDirectDestinations(
     });
   }
 
-  if (!isRecord(body) || !Array.isArray(body.destinations)) {
+  if (!isRecord(body)) {
+    const trace = exploreResponseTrace(query, response.status, undefined, "invalid");
+    options.diagnostics?.onExploreTrace?.(trace);
+    logInvalidExploreResponse(trace);
     throw new SearchApiError("SearchAPI returned an unexpected response.", {
       status: 502,
       retryable: false,
     });
   }
 
-  return deduplicateDirectDestinations(
+  if (isRecognizedEmptyExploreResponse(body)) {
+    options.diagnostics?.onExploreTrace?.(
+      exploreResponseTrace(query, response.status, body, "empty"),
+    );
+    return [];
+  }
+
+  if (!Array.isArray(body.destinations)) {
+    const trace = exploreResponseTrace(query, response.status, body, "invalid");
+    options.diagnostics?.onExploreTrace?.(trace);
+    logInvalidExploreResponse(trace);
+    throw new SearchApiError("SearchAPI returned an unexpected response.", { status: 502, retryable: false });
+  }
+
+  const destinations = deduplicateDirectDestinations(
     body.destinations
       .map((destination) => mapSearchApiExploreDestination(destination))
       .filter(
         (destination): destination is DirectDestination => destination !== null,
       ),
   );
+  if (body.destinations.length > 0 && destinations.length === 0) {
+    const trace = exploreResponseTrace(query, response.status, body, "invalid");
+    options.diagnostics?.onExploreTrace?.(trace);
+    logInvalidExploreResponse(trace);
+    throw new SearchApiError("SearchAPI returned destinations without usable flight data.", { status: 502, retryable: false });
+  }
+  options.diagnostics?.onExploreTrace?.(
+    exploreResponseTrace(
+      query,
+      response.status,
+      body,
+      destinations.length === 0 ? "empty" : "results",
+      destinations,
+    ),
+  );
+  return destinations;
+}
+
+async function fetchDirectDestinations(
+  input: DirectDestinationsInput,
+  options: ResolvedSearchApiOptions,
+): Promise<DirectDestination[]> {
+  try {
+    return await fetchDirectDestinationsOnce(input, options, 0);
+  } catch (error) {
+    const normalized = normalizeSearchApiError(error);
+    if (!normalized.retryable) throw error;
+    console.warn(`[searchapi] retrying Explore ${input.origin} ${input.departureDate} after ${normalized.message}`);
+    await pauseForRetry();
+    return fetchDirectDestinationsOnce(input, options, 1);
+  }
 }
 
 function mapSearchApiCalendarDay(value: unknown): FlightCalendarDay | null {
@@ -619,6 +784,7 @@ async function fetchWithTiming(
   query: URLSearchParams,
   options: ResolvedSearchApiOptions,
   init: RequestInit,
+  retryAttempt: 0 | 1 = 0,
 ): Promise<Response> {
   const startedAt = performance.now();
   const departure = query.get("departure_id") ?? undefined;
@@ -633,6 +799,7 @@ async function fetchWithTiming(
       durationMs: Number((performance.now() - startedAt).toFixed(2)),
       ...(status === undefined ? {} : { status }),
       success,
+      retryAttempt,
     };
     options.diagnostics?.onRequestTiming?.(value);
     if (process.env.SEARCH_DEBUG_TIMINGS === "true") console.info("[searchapi]", JSON.stringify(value));
@@ -732,7 +899,24 @@ async function fetchFlightCalendar(
     });
   }
 
-  if (!isRecord(body) || !Array.isArray(body.calendar)) {
+  if (!isRecord(body)) {
+    throw new SearchApiError("SearchAPI returned an unexpected response.", {
+      status: 502,
+      retryable: false,
+    });
+  }
+
+  if (isRecognizedEmptyFlightResponse(body) && !Array.isArray(body.calendar)) {
+    options.diagnostics?.onCalendarTrace?.({
+      request: queryRecord(query),
+      rawCalendarEntries: 0,
+      mappedCalendarDays: [],
+      calendarEntriesContainStopMetadata: false,
+    });
+    return [];
+  }
+
+  if (!Array.isArray(body.calendar)) {
     throw new SearchApiError("SearchAPI returned an unexpected response.", {
       status: 502,
       retryable: false,
@@ -742,6 +926,12 @@ async function fetchFlightCalendar(
   const mappedCalendarDays = body.calendar
     .map((entry) => mapSearchApiCalendarDay(entry))
     .filter((entry): entry is FlightCalendarDay => entry !== null);
+  if (body.calendar.length > 0 && mappedCalendarDays.length === 0) {
+    throw new SearchApiError("SearchAPI returned calendar results without usable flight data.", {
+      status: 502,
+      retryable: false,
+    });
+  }
   options.diagnostics?.onCalendarTrace?.({
     request: queryRecord(query),
     rawCalendarEntries: body.calendar.length,
@@ -823,7 +1013,7 @@ async function searchExactDate(
     ([key, value]) =>
       KNOWN_FLIGHT_RESULT_GROUPS.has(key) && Array.isArray(value),
   );
-  if (groups.length === 0 && !hasFlightResultArray) {
+  if (groups.length === 0 && !hasFlightResultArray && !isRecognizedEmptyFlightResponse(body)) {
     throw new SearchApiError("SearchAPI returned an unexpected response.", {
       status: 502,
       retryable: false,
@@ -848,6 +1038,12 @@ async function searchExactDate(
     mappedOffers: offers,
     parserRejections,
   });
+  if (groups.length > 0 && offers.length === 0) {
+    throw new SearchApiError("SearchAPI returned flight results without usable flight data.", {
+      status: 502,
+      retryable: false,
+    });
+  }
   return offers;
 }
 

@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Itinerary } from "../types/itinerary.ts";
 import type {
   SearchProgressEvent,
+  SearchOutcome,
   TwoStopDiscoveryMetadata,
 } from "../types/search.ts";
 import type { PublicSearchRequest } from "../lib/utils/searchValidation.ts";
@@ -32,6 +33,8 @@ import {
 } from "./itineraryPresentation";
 import { getResultsViewState } from "./resultsViewState";
 import { formatSearchFailureReference } from "./searchFailureReference";
+import { getAirportCityName } from "../data/airports";
+import { formatDateLabel } from "../lib/utils/formatFlight";
 import {
   countUniqueItineraries,
   shouldHandleSearchProgressEvent,
@@ -65,6 +68,45 @@ interface SearchFailureState {
 }
 
 type TwoStopExploreState = "idle" | "loading" | "empty" | "error";
+
+function SearchOutcomePanel({
+  outcome,
+  request,
+}: {
+  outcome: Exclude<SearchOutcome, "success" | "direct_only">;
+  request: PublicSearchRequest;
+}) {
+  const origin = `${getAirportCityName(request.origin)} (${request.origin})`;
+  const destination = getAirportCityName(request.destination);
+  const noUsableFlights = outcome === "no_usable_origin_flights";
+  return (
+    <div className="space-y-3" aria-live="polite">
+      <div className="space-y-2">
+        <p className="text-base font-medium text-slate-950">
+          {noUsableFlights
+            ? `No usable flights found from ${origin}`
+            : "We couldn’t find a stopover that fits your trip"}
+        </p>
+        <p className="text-sm text-slate-600">
+          {noUsableFlights
+            ? "We couldn't find usable scheduled flights from this airport for your selected date."
+            : `We found flight options, but none could get you to ${destination} by ${formatDateLabel(request.arriveBy)} with a meaningful stopover.`}
+        </p>
+        <p className="text-sm text-slate-600">
+          {noUsableFlights
+            ? "Try a nearby commercial airport."
+            : "Try extending the arrive-by date, changing your departure date, or using a nearby airport."}
+        </p>
+      </div>
+      <Link
+        href="/"
+        className="inline-flex rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-900 hover:border-slate-400 focus-visible:ring-2 focus-visible:ring-blue-700"
+      >
+        {noUsableFlights ? "New search" : "Change search"}
+      </Link>
+    </div>
+  );
+}
 
 async function readSearchProgress(
   response: Response,
@@ -200,6 +242,7 @@ export function ResultsClient({ request }: ResultsClientProps) {
   const [showAllTwoStop, setShowAllTwoStop] = useState(false);
   const [twoStopDiscovery, setTwoStopDiscovery] =
     useState<TwoStopDiscoveryMetadata | null>(null);
+  const [outcome, setOutcome] = useState<SearchOutcome | null>(null);
   const [twoStopExploreState, setTwoStopExploreState] =
     useState<TwoStopExploreState>("idle");
   const [twoStopExploreFailure, setTwoStopExploreFailure] =
@@ -230,6 +273,7 @@ export function ResultsClient({ request }: ResultsClientProps) {
       setShowAllOneStop(false);
       setShowAllTwoStop(false);
       setTwoStopDiscovery(null);
+      setOutcome(null);
       setTwoStopExploreState("idle");
       setTwoStopExploreFailure(null);
 
@@ -273,6 +317,7 @@ export function ResultsClient({ request }: ResultsClientProps) {
             const payload = event.result;
             setItineraries(deduplicateItineraries(payload.itineraries));
             setTwoStopDiscovery(payload.twoStopDiscovery);
+            setOutcome(payload.outcome);
             if (event.type !== "search_complete") return;
             completed = true;
             setSearchActive(false);
@@ -485,14 +530,10 @@ export function ResultsClient({ request }: ResultsClientProps) {
     return (
       <div className="space-y-4">
         {searchProgressStatus}
-        <div className="space-y-2">
-          <p className="text-base font-medium text-slate-950">
-            No routes found for these dates.
-          </p>
-          <p className="text-sm text-slate-600">
-            Try another departure date or a different airport.
-          </p>
-        </div>
+        <SearchOutcomePanel
+          outcome={outcome === "no_usable_origin_flights" ? outcome : "no_stopover_within_window"}
+          request={request}
+        />
       </div>
     );
   }
@@ -671,9 +712,14 @@ export function ResultsClient({ request }: ResultsClientProps) {
       {directOptions.length > 0 &&
       oneStopAdventures.length === 0 &&
       twoStopAdventures.length === 0 ? (
-        <p className="text-sm text-slate-600">
-          No stopover routes met our current quality criteria for these dates.
-        </p>
+        <div className="space-y-1" aria-live="polite">
+          <p className="text-base font-medium text-slate-950">
+            We couldn&apos;t find a worthwhile stopover that fits your travel window.
+          </p>
+          <p className="text-sm text-slate-600">
+            No stopover adventures fit this travel window.
+          </p>
+        </div>
       ) : null}
 
       {partialFailure ? (

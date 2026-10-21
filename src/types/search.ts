@@ -4,6 +4,7 @@ import type { RequestTiming, SearchTiming } from "../lib/instrumentation/searchT
 export type TwoStopDiscoveryReason =
   | "already_explored"
   | "portfolio_full"
+  | "insufficient_journey_window"
   | "route_too_short"
   | "not_needed"
   | "unavailable";
@@ -15,10 +16,21 @@ export interface TwoStopDiscoveryMetadata {
   reason: TwoStopDiscoveryReason;
 }
 
+/**
+ * A completed planner outcome. Provider failures deliberately do not appear
+ * here: they are represented by the typed API failure response instead.
+ */
+export type SearchOutcome =
+  | "success"
+  | "no_usable_origin_flights"
+  | "no_stopover_within_window"
+  | "direct_only";
+
 export interface DynamicSearchResult {
   count: number;
   itineraries: Itinerary[];
   twoStopDiscovery: TwoStopDiscoveryMetadata;
+  outcome: SearchOutcome;
   /** Server-only unless SEARCH_DEBUG_TIMINGS is enabled. */
   timing?: RequestTiming | SearchTiming;
 }

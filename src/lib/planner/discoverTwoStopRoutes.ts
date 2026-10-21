@@ -52,19 +52,24 @@ type WarningFunction = (message: string) => void;
 export interface TwoStopEligibilityInput {
   directDistanceKm: number;
   cleanOneStopAdventureCount: number;
+  journeyWindowDays?: number;
 }
 
 export interface TwoStopEligibility {
   eligible: boolean;
   targetResults: number;
-  reason: "short_distance" | "portfolio_full" | "eligible";
+  reason: "short_distance" | "portfolio_full" | "insufficient_journey_window" | "eligible";
 }
 
 /** Kept deliberately small and transparent for the V1 launch. */
 export function shouldExploreTwoStopovers({
   directDistanceKm,
   cleanOneStopAdventureCount,
+  journeyWindowDays,
 }: TwoStopEligibilityInput): TwoStopEligibility {
+  if (journeyWindowDays !== undefined && journeyWindowDays < MIN_TWO_STOP_STAY_NIGHTS * 2) {
+    return { eligible: false, targetResults: 0, reason: "insufficient_journey_window" };
+  }
   if (directDistanceKm < TWO_STOP_MIN_DIRECT_DISTANCE_KM) {
     return { eligible: false, targetResults: 0, reason: "short_distance" };
   }

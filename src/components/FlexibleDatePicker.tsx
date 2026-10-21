@@ -2,7 +2,6 @@
 
 import { useId, useMemo, useState, type KeyboardEvent } from "react";
 
-
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTH_FORMATTER = new Intl.DateTimeFormat("en", {
   month: "long",
@@ -60,12 +59,23 @@ export interface FlexibleDatePickerProps {
   minDate?: string;
 }
 
-export function FlexibleDatePicker({ value, onChange, error, label = "Depart", minDate }: FlexibleDatePickerProps) {
+export function FlexibleDatePicker({
+  value,
+  onChange,
+  error,
+  label = "Depart",
+  minDate,
+}: FlexibleDatePickerProps) {
   const dialogId = useId();
   const inputId = label === "Arrive by" ? "arrive-by" : "departure-date";
-  const today = minDate && minDate > formatDate(new Date()) ? minDate : formatDate(new Date());
+  const today =
+    minDate && minDate > formatDate(new Date())
+      ? minDate
+      : formatDate(new Date());
   const [isOpen, setIsOpen] = useState(false);
-  const [visibleMonth, setVisibleMonth] = useState(() => startOfMonth(value || today));
+  const [visibleMonth, setVisibleMonth] = useState(() =>
+    startOfMonth(value || today),
+  );
   const dates = useMemo(() => calendarDates(visibleMonth), [visibleMonth]);
 
   function selectDate(date: string) {
@@ -79,11 +89,16 @@ export function FlexibleDatePicker({ value, onChange, error, label = "Depart", m
     if (nextDate < today) return;
     setVisibleMonth(startOfMonth(nextDate));
     window.requestAnimationFrame(() => {
-      document.querySelector<HTMLButtonElement>(`[data-calendar-date="${nextDate}"]`)?.focus();
+      document
+        .querySelector<HTMLButtonElement>(`[data-calendar-date="${nextDate}"]`)
+        ?.focus();
     });
   }
 
-  function handleDayKeyDown(event: KeyboardEvent<HTMLButtonElement>, date: string) {
+  function handleDayKeyDown(
+    event: KeyboardEvent<HTMLButtonElement>,
+    date: string,
+  ) {
     const movements: Record<string, number> = {
       ArrowLeft: -1,
       ArrowRight: 1,
@@ -106,7 +121,10 @@ export function FlexibleDatePicker({ value, onChange, error, label = "Depart", m
 
   return (
     <div className="relative min-w-0">
-      <label className="mb-2 block text-sm font-semibold text-slate-900" htmlFor={inputId}>
+      <label
+        className="mb-2 block text-sm font-semibold text-slate-900"
+        htmlFor={inputId}
+      >
         {label}
       </label>
       <button
@@ -121,13 +139,19 @@ export function FlexibleDatePicker({ value, onChange, error, label = "Depart", m
           error ? "border-red-600" : "border-slate-300 hover:border-slate-400"
         } rounded-lg`}
       >
-        <span>{value ? DATE_FORMATTER.format(parseDate(value)) : "Select a date"}</span>
-        <span aria-hidden="true" className="text-slate-500">⌄</span>
+        <span>
+          {value ? DATE_FORMATTER.format(parseDate(value)) : "Select a date"}
+        </span>
+        <span aria-hidden="true" className="text-slate-500">
+          ⌄
+        </span>
       </button>
-      <p id="departure-window-help" className="mt-2 text-sm text-slate-600">
-        {label === "Arrive by" ? "Latest destination arrival date." : "Your flight leaves on this date."}
-      </p>
-      {error ? <p id="dates-error" className="mt-2 text-sm text-red-700">{error}</p> : null}
+      <p id="departure-window-help" className="mt-2 text-sm text-slate-600"></p>
+      {error ? (
+        <p id="dates-error" className="mt-2 text-sm text-red-700">
+          {error}
+        </p>
+      ) : null}
 
       {isOpen ? (
         <div
@@ -141,17 +165,41 @@ export function FlexibleDatePicker({ value, onChange, error, label = "Depart", m
           className="absolute z-30 mt-2 w-full min-w-[min(100%,22rem)] border border-slate-200 bg-white p-3 shadow-xl sm:w-[22rem] sm:p-4"
         >
           <div className="mb-4 flex items-center justify-between">
-            <button type="button" onClick={() => setVisibleMonth((month) => addMonths(month, -1))} className="grid size-10 place-items-center rounded-md text-slate-700 outline-none hover:bg-slate-100 focus-visible:ring-2 focus-visible:ring-blue-600" aria-label="Previous month">‹</button>
-            <p className="text-sm font-semibold text-slate-950">{MONTH_FORMATTER.format(parseDate(visibleMonth))}</p>
-            <button type="button" onClick={() => setVisibleMonth((month) => addMonths(month, 1))} className="grid size-10 place-items-center rounded-md text-slate-700 outline-none hover:bg-slate-100 focus-visible:ring-2 focus-visible:ring-blue-600" aria-label="Next month">›</button>
+            <button
+              type="button"
+              onClick={() => setVisibleMonth((month) => addMonths(month, -1))}
+              className="grid size-10 place-items-center rounded-md text-slate-700 outline-none hover:bg-slate-100 focus-visible:ring-2 focus-visible:ring-blue-600"
+              aria-label="Previous month"
+            >
+              ‹
+            </button>
+            <p className="text-sm font-semibold text-slate-950">
+              {MONTH_FORMATTER.format(parseDate(visibleMonth))}
+            </p>
+            <button
+              type="button"
+              onClick={() => setVisibleMonth((month) => addMonths(month, 1))}
+              className="grid size-10 place-items-center rounded-md text-slate-700 outline-none hover:bg-slate-100 focus-visible:ring-2 focus-visible:ring-blue-600"
+              aria-label="Next month"
+            >
+              ›
+            </button>
           </div>
-          <div className="grid grid-cols-7 text-center text-xs font-medium text-slate-500" aria-hidden="true">
-            {WEEKDAYS.map((day) => <span key={day} className="py-1">{day}</span>)}
+          <div
+            className="grid grid-cols-7 text-center text-xs font-medium text-slate-500"
+            aria-hidden="true"
+          >
+            {WEEKDAYS.map((day) => (
+              <span key={day} className="py-1">
+                {day}
+              </span>
+            ))}
           </div>
           <div className="grid grid-cols-7 gap-y-1">
             {dates.map((date) => {
               const isSelected = date === value;
-              const isCurrentMonth = date.slice(0, 7) === visibleMonth.slice(0, 7);
+              const isCurrentMonth =
+                date.slice(0, 7) === visibleMonth.slice(0, 7);
               const isPast = date < today;
               return (
                 <button
@@ -167,8 +215,8 @@ export function FlexibleDatePicker({ value, onChange, error, label = "Depart", m
                     isSelected
                       ? "bg-blue-700 font-semibold text-white"
                       : isCurrentMonth
-                          ? "text-slate-900 hover:bg-slate-100"
-                          : "text-slate-400 hover:bg-slate-100"
+                        ? "text-slate-900 hover:bg-slate-100"
+                        : "text-slate-400 hover:bg-slate-100"
                   }`}
                 >
                   {Number(date.slice(8, 10))}
@@ -177,7 +225,9 @@ export function FlexibleDatePicker({ value, onChange, error, label = "Depart", m
             })}
           </div>
           <p className="mt-3 border-t border-slate-100 pt-3 text-xs text-slate-600">
-            {label === "Arrive by" ? "Choose the latest date you can arrive." : "Choose the date you leave."}
+            {label === "Arrive by"
+              ? "Choose the latest date you can arrive."
+              : "Choose the date you leave."}
           </p>
         </div>
       ) : null}
